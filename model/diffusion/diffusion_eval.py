@@ -12,7 +12,7 @@ import torch
 
 log = logging.getLogger(__name__)
 
-from model.diffusion.diffusion import DiffusionModel
+from model.diffusion.diffusion import DiffusionModel, _strip_compiled_prefix
 from model.diffusion.sampling import extract
 
 
@@ -30,13 +30,15 @@ class DiffusionEval(DiffusionModel):
         checkpoint = torch.load(
             network_path, map_location=self.device, weights_only=True
         )  # 'network.mlp_mean...', 'actor.mlp_mean...', 'actor_ft.mlp_mean...'
+        checkpoint_key = "ema" if "ema" in checkpoint else "model"
+        state_dict = _strip_compiled_prefix(checkpoint[checkpoint_key])
 
         # Set up base model --- techncally not needed if all denoising steps are fine-tuned
         self.actor = self.network
         try:
             base_weights = {
-                key.split("actor.")[1]: checkpoint["model"][key]
-                for key in checkpoint["model"]
+                key.split("actor.")[1]: state_dict[key]
+                for key in state_dict
                 if "actor." in key
             }
             use_ft = True
@@ -46,25 +48,31 @@ class DiffusionEval(DiffusionModel):
                 "If no base policy weights are found, ft_denoising_steps must be 0"
             )
             base_weights = {
-                key.split("network.")[1]: checkpoint["model"][key]
-                for key in checkpoint["model"]
+                key.split("network.")[1]: state_dict[key]
+                for key in state_dict
                 if "network." in key
             }
             use_ft = False
             logging.info("Actor weights not found. Using pre-trained weights!")
             self.actor.load_state_dict(base_weights, strict=True)
-        logging.info("Loaded base policy weights from %s", network_path)
+        logging.info(
+            "Loaded base policy weights from %s (%s)", network_path, checkpoint_key
+        )
 
         # Always set up fine-tuned model
         if use_ft:
             self.actor_ft = copy.deepcopy(self.network)
             ft_weights = {
-                key.split("actor_ft.")[1]: checkpoint["model"][key]
-                for key in checkpoint["model"]
+                key.split("actor_ft.")[1]: state_dict[key]
+                for key in state_dict
                 if "actor_ft." in key
             }
             self.actor_ft.load_state_dict(ft_weights, strict=True)
-            logging.info("Loaded fine-tuned policy weights from %s", network_path)
+            logging.info(
+                "Loaded fine-tuned policy weights from %s (%s)",
+                network_path,
+                checkpoint_key,
+            )
 
     # override
     def p_mean_var(

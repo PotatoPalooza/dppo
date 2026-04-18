@@ -32,7 +32,7 @@ class TrainGaussianAgent(PreTrainAgent):
             ent_train_epoch = []
             for batch_train in self.dataloader_train:
                 if self.dataset_train.device == "cpu":
-                    batch_train = batch_to_device(batch_train)
+                    batch_train = batch_to_device(batch_train, self.device)
 
                 self.model.train()
                 loss_train, infos_train = self.model.loss(
@@ -59,7 +59,7 @@ class TrainGaussianAgent(PreTrainAgent):
                 self.model.eval()
                 for batch_val in self.dataloader_val:
                     if self.dataset_val.device == "cpu":
-                        batch_val = batch_to_device(batch_val)
+                        batch_val = batch_to_device(batch_val, self.device)
                     loss_val, infos_val = self.model.loss(
                         *batch_val,
                         ent_coef=self.ent_coef,

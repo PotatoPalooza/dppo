@@ -5,8 +5,13 @@ Launcher for all experiments. Download pre-training data, normalization statisti
 
 import os
 import sys
-import pretty_errors
 import logging
+from pathlib import Path
+
+try:
+    import pretty_errors  # noqa: F401
+except ModuleNotFoundError:
+    pretty_errors = None
 
 import math
 import hydra
@@ -25,6 +30,10 @@ OmegaConf.register_new_resolver("round_down", math.floor)
 
 # suppress d4rl import error
 os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # add logger
 log = logging.getLogger(__name__)

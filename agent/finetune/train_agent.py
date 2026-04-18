@@ -75,6 +75,7 @@ class TrainAgent:
             if "specific" in cfg.env
             else False
         )  # furniture specific, for best reward calculation
+        self.success_info_key = cfg.env.get("success_info_key", None)
 
         # Batch size for gradient update
         self.batch_size: int = cfg.train.batch_size

@@ -19,7 +19,7 @@ import logging
 log = logging.getLogger(__name__)
 import torch.nn.functional as F
 
-from model.diffusion.diffusion import DiffusionModel, Sample
+from model.diffusion.diffusion import DiffusionModel, Sample, _strip_compiled_prefix
 from model.diffusion.sampling import make_timesteps, extract
 from torch.distributions import Normal
 
@@ -94,7 +94,9 @@ class VPGDiffusion(DiffusionModel):
                 network_path, map_location=self.device, weights_only=True
             )
             if "ema" not in checkpoint:  # load trained RL model
-                self.load_state_dict(checkpoint["model"], strict=False)
+                self.load_state_dict(
+                    _strip_compiled_prefix(checkpoint["model"]), strict=False
+                )
                 logging.info("Loaded critic from %s", network_path)
 
     # ---------- Sampling ----------#

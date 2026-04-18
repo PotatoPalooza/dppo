@@ -18,6 +18,16 @@ from agent.finetune.train_ppo_agent import TrainPPOAgent
 from util.scheduler import CosineAnnealingWarmupRestarts
 
 
+def _coerce_success_flag(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(_coerce_success_flag(elem) for elem in value)
+    if isinstance(value, np.ndarray):
+        return bool(np.max(value))
+    return bool(value)
+
+
 class TrainPPODiffusionAgent(TrainPPOAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -91,6 +101,11 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             )
             terminated_trajs = np.zeros((self.n_steps, self.n_envs))
             reward_trajs = np.zeros((self.n_steps, self.n_envs))
+            success_trajs = (
+                np.zeros((self.n_steps, self.n_envs), dtype=bool)
+                if self.success_info_key is not None
+                else None
+            )
             if self.save_full_observations:  # state-only
                 obs_full_trajs = np.empty((0, self.n_envs, self.obs_dim))
                 obs_full_trajs = np.vstack(
@@ -131,6 +146,14 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     info_venv,
                 ) = self.venv.step(action_venv)
                 done_venv = terminated_venv | truncated_venv
+                if success_trajs is not None:
+                    success_trajs[step] = np.asarray(
+                        [
+                            _coerce_success_flag(info.get(self.success_info_key))
+                            for info in info_venv
+                        ],
+                        dtype=bool,
+                    )
                 if self.save_full_observations:  # state-only
                     obs_full_venv = np.array(
                         [info["full_obs"]["state"] for info in info_venv]
@@ -181,9 +204,19 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     )
                 avg_episode_reward = np.mean(episode_reward)
                 avg_best_reward = np.mean(episode_best_reward)
-                success_rate = np.mean(
-                    episode_best_reward >= self.best_reward_threshold_for_success
-                )
+                if success_trajs is not None:
+                    episode_success = np.array(
+                        [
+                            np.max(success_trajs[start : end + 1, env_ind])
+                            for env_ind, start, end in episodes_start_end
+                        ],
+                        dtype=bool,
+                    )
+                    success_rate = np.mean(episode_success)
+                else:
+                    success_rate = np.mean(
+                        episode_best_reward >= self.best_reward_threshold_for_success
+                    )
             else:
                 episode_reward = np.array([])
                 num_episode_finished = 0

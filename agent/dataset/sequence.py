@@ -131,14 +131,19 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         return indices
 
     def set_train_val_split(self, train_split):
-        """
-        Not doing validation right now
-        """
-        num_train = int(len(self.indices) * train_split)
-        train_indices = random.sample(self.indices, num_train)
-        val_indices = [i for i in range(len(self.indices)) if i not in train_indices]
+        num_total = len(self.indices)
+        num_train = int(num_total * train_split)
+        perm = list(range(num_total))
+        random.shuffle(perm)
+        train_pos = sorted(perm[:num_train])
+        val_pos = sorted(perm[num_train:])
+        train_indices = [self.indices[i] for i in train_pos]
+        val_indices = [self.indices[i] for i in val_pos]
         self.indices = train_indices
         return val_indices
+
+    def set_indices(self, indices):
+        self.indices = indices
 
     def __len__(self):
         return len(self.indices)

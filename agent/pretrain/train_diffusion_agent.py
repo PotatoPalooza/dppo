@@ -3,9 +3,11 @@ Pre-training diffusion policy
 
 """
 
+import contextlib
 import logging
 import wandb
 import numpy as np
+import torch
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -16,6 +18,15 @@ class TrainDiffusionAgent(PreTrainAgent):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        self.use_bf16 = cfg.train.get("use_bf16", False)
+        if cfg.train.get("use_compile", False):
+            self.model = torch.compile(self.model)
+            self.ema_model = torch.compile(self.ema_model)
+
+    def _autocast(self):
+        if self.use_bf16 and "cuda" in str(self.device):
+            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        return contextlib.nullcontext()
 
     def run(self):
 
@@ -28,10 +39,11 @@ class TrainDiffusionAgent(PreTrainAgent):
             loss_train_epoch = []
             for batch_train in self.dataloader_train:
                 if self.dataset_train.device == "cpu":
-                    batch_train = batch_to_device(batch_train)
+                    batch_train = batch_to_device(batch_train, self.device)
 
                 self.model.train()
-                loss_train = self.model.loss(*batch_train)
+                with self._autocast():
+                    loss_train = self.model.loss(*batch_train)
                 loss_train.backward()
                 loss_train_epoch.append(loss_train.item())
 
@@ -48,11 +60,13 @@ class TrainDiffusionAgent(PreTrainAgent):
             loss_val_epoch = []
             if self.dataloader_val is not None and self.epoch % self.val_freq == 0:
                 self.model.eval()
-                for batch_val in self.dataloader_val:
-                    if self.dataset_val.device == "cpu":
-                        batch_val = batch_to_device(batch_val)
-                    loss_val, infos_val = self.model.loss(*batch_val)
-                    loss_val_epoch.append(loss_val.item())
+                with torch.no_grad():
+                    for batch_val in self.dataloader_val:
+                        if self.dataset_val.device == "cpu":
+                            batch_val = batch_to_device(batch_val, self.device)
+                        with self._autocast():
+                            loss_val = self.model.loss(*batch_val)
+                        loss_val_epoch.append(loss_val.item())
                 self.model.train()
             loss_val = np.mean(loss_val_epoch) if len(loss_val_epoch) > 0 else None
 
@@ -65,8 +79,9 @@ class TrainDiffusionAgent(PreTrainAgent):
 
             # log loss
             if self.epoch % self.log_freq == 0:
+                val_str = f" | val loss {loss_val:8.4f}" if loss_val is not None else ""
                 log.info(
-                    f"{self.epoch}: train loss {loss_train:8.4f} | t:{timer():8.4f}"
+                    f"{self.epoch}: train loss {loss_train:8.4f}{val_str} | t:{timer():8.4f}"
                 )
                 if self.use_wandb:
                     if loss_val is not None:

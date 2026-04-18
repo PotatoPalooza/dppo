@@ -124,6 +124,13 @@ class RobomimicLowdimWrapper(gym.Env):
         if self.normalize:
             action = self.unnormalize_action(action)
         raw_obs, reward, done, info = self.env.step(action)
+        info = dict(info)
+        success_fn = getattr(self.env, "is_success", None)
+        if callable(success_fn):
+            try:
+                info["success"] = bool(success_fn().get("task", False))
+            except Exception:
+                info["success"] = False
         obs = self.get_observation(raw_obs)
 
         # render if specified

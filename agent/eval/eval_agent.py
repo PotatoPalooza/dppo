@@ -63,6 +63,7 @@ class EvalAgent:
             if "specific" in cfg.env
             else False
         )  # furniture specific, for best reward calculation
+        self.success_info_key = cfg.env.get("success_info_key", None)
 
         # Build model and load checkpoint
         self.model = hydra.utils.instantiate(cfg.model)

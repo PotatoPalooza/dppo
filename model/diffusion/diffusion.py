@@ -26,6 +26,14 @@ from collections import namedtuple
 Sample = namedtuple("Sample", "trajectories chains")
 
 
+def _strip_compiled_prefix(state_dict):
+    if not any(key.startswith("_orig_mod.") for key in state_dict):
+        return state_dict
+    return {
+        key.removeprefix("_orig_mod."): value for key, value in state_dict.items()
+    }
+
+
 class DiffusionModel(nn.Module):
 
     def __init__(
@@ -79,10 +87,14 @@ class DiffusionModel(nn.Module):
                 network_path, map_location=device, weights_only=True
             )
             if "ema" in checkpoint:
-                self.load_state_dict(checkpoint["ema"], strict=False)
+                self.load_state_dict(
+                    _strip_compiled_prefix(checkpoint["ema"]), strict=False
+                )
                 logging.info("Loaded SL-trained policy from %s", network_path)
             else:
-                self.load_state_dict(checkpoint["model"], strict=False)
+                self.load_state_dict(
+                    _strip_compiled_prefix(checkpoint["model"]), strict=False
+                )
                 logging.info("Loaded RL-trained policy from %s", network_path)
         logging.info(
             f"Number of network parameters: {sum(p.numel() for p in self.parameters())}"

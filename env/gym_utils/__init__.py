@@ -147,7 +147,7 @@ def make_async(
             if obs_modality_dict["rgb"] is None:
                 obs_modality_dict.pop("rgb")
             ObsUtils.initialize_obs_modality_mapping_from_dict(obs_modality_dict)
-            if render_offscreen or use_image_obs:
+            if (render_offscreen or use_image_obs) and not os.environ.get("MUJOCO_GL"):
                 os.environ["MUJOCO_GL"] = "egl"
             with open(robomimic_env_cfg_path, "r") as f:
                 env_meta = json.load(f)
