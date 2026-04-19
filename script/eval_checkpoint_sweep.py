@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", required=True, help="Directory containing state_*.pt checkpoints.")
     parser.add_argument("--output-dir", required=True, help="Directory for per-checkpoint eval outputs and summary.")
     parser.add_argument("--device", default="cuda:0", help="Device override passed into the eval config.")
+    parser.add_argument("--seed", type=int, default=None, help="Optional eval seed override shared by every checkpoint in the sweep.")
     parser.add_argument("--n-envs", type=int, default=None, help="Optional eval env count override.")
     parser.add_argument("--n-episodes", type=int, default=None, help="Optional completed-episode target override.")
     parser.add_argument("--n-steps", type=int, default=None, help="Optional eval rollout length override.")
@@ -126,6 +127,8 @@ def _run_eval(
         f"env.save_video={str(save_video)}",
         f"render_num={args.render_num if save_video else 0}",
     ]
+    if args.seed is not None:
+        command.append(f"seed={args.seed}")
     if args.n_envs is not None:
         command.append(f"env.n_envs={args.n_envs}")
     if args.n_episodes is not None:
@@ -267,6 +270,7 @@ def main() -> None:
         "checkpoint_dir": str(checkpoint_dir),
         "output_dir": str(output_dir),
         "device": args.device,
+        "seed": args.seed,
         "n_envs": args.n_envs,
         "n_episodes": args.n_episodes,
         "n_steps": args.n_steps,
