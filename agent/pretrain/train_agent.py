@@ -88,6 +88,21 @@ class PreTrainAgent:
         self.model = hydra.utils.instantiate(cfg.model)
         self.ema = EMA(cfg.ema)
         self.ema_model = deepcopy(self.model)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=cfg.train.learning_rate,
+            weight_decay=cfg.train.weight_decay,
+        )
+        self.lr_scheduler = CosineAnnealingWarmupRestarts(
+            self.optimizer,
+            first_cycle_steps=cfg.train.lr_scheduler.first_cycle_steps,
+            cycle_mult=1.0,
+            max_lr=cfg.train.learning_rate,
+            min_lr=cfg.train.lr_scheduler.min_lr,
+            warmup_steps=cfg.train.lr_scheduler.warmup_steps,
+            gamma=1.0,
+        )
+        self.reset_parameters()
 
         # Training params
         self.n_epochs = cfg.train.n_epochs
@@ -143,21 +158,6 @@ class PreTrainAgent:
 
         wandb.log = _safe_log
         wandb._rl_mimicgen_safe_log_installed = True
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=cfg.train.learning_rate,
-            weight_decay=cfg.train.weight_decay,
-        )
-        self.lr_scheduler = CosineAnnealingWarmupRestarts(
-            self.optimizer,
-            first_cycle_steps=cfg.train.lr_scheduler.first_cycle_steps,
-            cycle_mult=1.0,
-            max_lr=cfg.train.learning_rate,
-            min_lr=cfg.train.lr_scheduler.min_lr,
-            warmup_steps=cfg.train.lr_scheduler.warmup_steps,
-            gamma=1.0,
-        )
-        self.reset_parameters()
 
     def run(self):
         raise NotImplementedError
