@@ -338,6 +338,13 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 # Update policy and critic
                 total_steps = self.n_steps * self.n_envs * self.model.ft_denoising_steps
                 clipfracs = []
+                approx_kls = []
+                ratios = []
+                pg_losses = []
+                v_losses = []
+                bc_losses = []
+                ent_losses = []
+                etas = []
                 for update_epoch in range(self.update_epochs):
                     # for each epoch, go through all data in batches
                     flag_break = False
@@ -388,6 +395,13 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                             + bc_loss * self.bc_loss_coeff
                         )
                         clipfracs += [clipfrac]
+                        approx_kls.append(float(approx_kl))
+                        ratios.append(float(ratio))
+                        pg_losses.append(float(pg_loss))
+                        v_losses.append(float(v_loss))
+                        bc_losses.append(float(bc_loss))
+                        ent_losses.append(float(entropy_loss))
+                        etas.append(float(eta))
 
                         # update policy and critic
                         self.actor_optimizer.zero_grad()
@@ -421,6 +435,24 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 explained_var = (
                     np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
                 )
+                iteration_stats = {
+                    "loss": float(loss),
+                    "pg_loss": float(np.mean(pg_losses)) if pg_losses else float("nan"),
+                    "value_loss": float(np.mean(v_losses)) if v_losses else float("nan"),
+                    "bc_loss": float(np.mean(bc_losses)) if bc_losses else float("nan"),
+                    "entropy_loss": float(np.mean(ent_losses)) if ent_losses else float("nan"),
+                    "eta": float(np.mean(etas)) if etas else float("nan"),
+                    "approx_kl_mean": float(np.mean(approx_kls)) if approx_kls else float("nan"),
+                    "approx_kl_max": float(np.max(approx_kls)) if approx_kls else float("nan"),
+                    "ratio_mean": float(np.mean(ratios)) if ratios else float("nan"),
+                    "ratio_last": float(ratio),
+                    "clipfrac_mean": float(np.mean(clipfracs)) if clipfracs else float("nan"),
+                    "explained_variance": float(explained_var),
+                    "num_batch": int(num_batch),
+                    "num_update_epochs_completed": int(update_epoch + 1),
+                }
+            else:
+                iteration_stats = {}
 
             # Plot state trajectories (only in D3IL)
             if (
@@ -446,14 +478,21 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             diffusion_min_sampling_std = self.model.get_min_sampling_denoising_std()
 
             # Save model
+            checkpoint_path = None
             if self.itr % self.save_model_freq == 0 or self.itr == self.n_train_itr - 1:
-                self.save_model()
+                checkpoint_path = self.save_model()
 
             # Log loss and save metrics
             run_results.append(
                 {
                     "itr": self.itr,
                     "step": cnt_train_step,
+                    "eval_mode": eval_mode,
+                    "num_episode_finished": int(num_episode_finished),
+                    "success_rate": float(success_rate),
+                    "avg_episode_reward": float(avg_episode_reward),
+                    "avg_best_reward": float(avg_best_reward),
+                    "checkpoint_path": checkpoint_path,
                 }
             )
             if self.save_trajs:
@@ -482,25 +521,31 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     run_results[-1]["eval_success_rate"] = success_rate
                     run_results[-1]["eval_episode_reward"] = avg_episode_reward
                     run_results[-1]["eval_best_reward"] = avg_best_reward
+                    if success_rate > self.best_eval_success:
+                        self.save_best_checkpoint(run_results[-1])
                 else:
                     log.info(
-                        f"{self.itr}: step {cnt_train_step:8d} | loss {loss:8.4f} | pg loss {pg_loss:8.4f} | value loss {v_loss:8.4f} | bc loss {bc_loss:8.4f} | reward {avg_episode_reward:8.4f} | eta {eta:8.4f} | t:{time:8.4f}"
+                        f"{self.itr}: step {cnt_train_step:8d} | loss {iteration_stats['loss']:8.4f} | pg loss {iteration_stats['pg_loss']:8.4f} | value loss {iteration_stats['value_loss']:8.4f} | bc loss {iteration_stats['bc_loss']:8.4f} | reward {avg_episode_reward:8.4f} | success {success_rate:8.4f} | eta {iteration_stats['eta']:8.4f} | kl(mean/max) {iteration_stats['approx_kl_mean']:8.4f}/{iteration_stats['approx_kl_max']:8.4f} | t:{time:8.4f}"
                     )
                     if self.use_wandb:
                         wandb.log(
                             {
                                 "total env step": cnt_train_step,
-                                "loss": loss,
-                                "pg loss": pg_loss,
-                                "value loss": v_loss,
-                                "bc loss": bc_loss,
-                                "eta": eta,
-                                "approx kl": approx_kl,
-                                "ratio": ratio,
-                                "clipfrac": np.mean(clipfracs),
-                                "explained variance": explained_var,
+                                "loss": iteration_stats["loss"],
+                                "pg loss": iteration_stats["pg_loss"],
+                                "value loss": iteration_stats["value_loss"],
+                                "bc loss": iteration_stats["bc_loss"],
+                                "entropy loss": iteration_stats["entropy_loss"],
+                                "eta": iteration_stats["eta"],
+                                "approx kl": iteration_stats["approx_kl_mean"],
+                                "approx kl max": iteration_stats["approx_kl_max"],
+                                "ratio": iteration_stats["ratio_mean"],
+                                "ratio last": iteration_stats["ratio_last"],
+                                "clipfrac": iteration_stats["clipfrac_mean"],
+                                "explained variance": iteration_stats["explained_variance"],
                                 "avg episode reward - train": avg_episode_reward,
                                 "num episode - train": num_episode_finished,
+                                "success rate - train": success_rate,
                                 "diffusion - min sampling std": diffusion_min_sampling_std,
                                 "actor lr": self.actor_optimizer.param_groups[0]["lr"],
                                 "critic lr": self.critic_optimizer.param_groups[0][
@@ -511,6 +556,9 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                             commit=True,
                         )
                     run_results[-1]["train_episode_reward"] = avg_episode_reward
+                    run_results[-1]["train_success_rate"] = success_rate
+                    run_results[-1].update(iteration_stats)
+                self._record_metrics(run_results[-1])
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1

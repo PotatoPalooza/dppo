@@ -4,6 +4,8 @@ Parent fine-tuning agent class.
 """
 
 import os
+import json
+import shutil
 import numpy as np
 from omegaconf import OmegaConf
 import torch
@@ -106,8 +108,16 @@ class TrainAgent:
         self.render_dir = os.path.join(self.logdir, "render")
         self.checkpoint_dir = os.path.join(self.logdir, "checkpoint")
         self.result_path = os.path.join(self.logdir, "result.pkl")
+        self.metrics_path = os.path.join(self.logdir, "metrics.jsonl")
+        self.checkpoint_history_path = os.path.join(self.logdir, "checkpoint_history.jsonl")
+        self.best_checkpoint_path = os.path.join(self.logdir, "best_checkpoint.pt")
+        self.best_checkpoint_summary_path = os.path.join(self.logdir, "best_checkpoint.json")
+        self.latest_summary_path = os.path.join(self.logdir, "latest_summary.json")
         os.makedirs(self.render_dir, exist_ok=True)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        self.best_eval_success = float("-inf")
+        self.best_eval_metrics = None
+        self.best_eval_itr = None
         self.save_trajs = cfg.train.get("save_trajs", False)
         self.log_freq = cfg.train.get("log_freq", 1)
         self.save_model_freq = cfg.train.save_model_freq
@@ -144,17 +154,92 @@ class TrainAgent:
     def run(self):
         pass
 
-    def save_model(self):
-        """
-        saves model to disk; no ema
-        """
+    def _json_default(self, value):
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, torch.Tensor):
+            if value.ndim == 0:
+                return value.item()
+            return value.detach().cpu().tolist()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+    def _write_json(self, path, payload):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=self._json_default)
+
+    def _append_jsonl(self, path, payload):
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, default=self._json_default) + "\n")
+
+    def _serialize_model(self, path):
         data = {
             "itr": self.itr,
             "model": self.model.state_dict(),
         }  # right now `model` includes weights for `network`, `actor`, `actor_ft`. Weights for `network` is redundant, and we can use `actor` weights as the base policy (earlier denoising steps) and `actor_ft` weights as the fine-tuned policy (later denoising steps) during evaluation.
+        torch.save(data, path)
+        return path
+
+    def _success_tagged_checkpoint_path(self, success_rate):
+        success_pct = int(max(0.0, float(success_rate)) * 100.0)
+        return os.path.join(self.logdir, f"best_checkpoint_{success_pct}_best.pt")
+
+    def _record_metrics(self, payload):
+        self._append_jsonl(self.metrics_path, payload)
+        self._write_json(self.latest_summary_path, payload)
+
+    def _record_checkpoint_event(self, payload):
+        self._append_jsonl(self.checkpoint_history_path, payload)
+
+    def save_best_checkpoint(self, metrics):
+        checkpoint_path = self._serialize_model(self.best_checkpoint_path)
+        tagged_checkpoint_path = self._success_tagged_checkpoint_path(metrics["eval_success_rate"])
+        shutil.copy2(checkpoint_path, tagged_checkpoint_path)
+        summary = {
+            "itr": self.itr,
+            "step": metrics.get("step"),
+            "best_eval_success": float(metrics["eval_success_rate"]),
+            "best_eval_metrics": metrics,
+            "best_checkpoint": checkpoint_path,
+            "tagged_best_checkpoint": tagged_checkpoint_path,
+        }
+        self.best_eval_success = float(metrics["eval_success_rate"])
+        self.best_eval_metrics = summary
+        self.best_eval_itr = self.itr
+        self._write_json(self.best_checkpoint_summary_path, summary)
+        self._record_checkpoint_event(
+            {
+                "kind": "best_eval",
+                "itr": self.itr,
+                "step": metrics.get("step"),
+                "checkpoint_path": checkpoint_path,
+                "tagged_checkpoint_path": tagged_checkpoint_path,
+                "eval_success_rate": float(metrics["eval_success_rate"]),
+            }
+        )
+        log.info(
+            "Saved best eval checkpoint at itr=%s success_rate=%.4f to %s",
+            self.itr,
+            float(metrics["eval_success_rate"]),
+            checkpoint_path,
+        )
+
+    def save_model(self):
+        """
+        saves model to disk; no ema
+        """
         savepath = os.path.join(self.checkpoint_dir, f"state_{self.itr}.pt")
-        torch.save(data, savepath)
+        self._serialize_model(savepath)
         log.info(f"Saved model to {savepath}")
+        self._record_checkpoint_event(
+            {
+                "kind": "periodic",
+                "itr": self.itr,
+                "checkpoint_path": savepath,
+            }
+        )
+        return savepath
 
     def load(self, itr):
         """
