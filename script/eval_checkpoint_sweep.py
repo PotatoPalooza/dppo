@@ -141,11 +141,49 @@ def _run_eval(
     return _load_result_metrics(result_path)
 
 
+def _success_copy_path(base_path: Path, success_rate: float) -> Path:
+    success_pct = int(max(0.0, float(success_rate)) * 100.0)
+    return base_path.with_name(
+        f"{base_path.stem}_{success_pct}_best{base_path.suffix}"
+    )
+
+
+def _format_metrics_log(metrics_rows: list[dict[str, float | int | str]]) -> str:
+    lines = [
+        "checkpoint_index\tsuccess_rate\tbest_reward_mean\treturn_mean\tnum_episode\ttime\tcheckpoint_path"
+    ]
+    for metrics in metrics_rows:
+        lines.append(
+            "\t".join(
+                [
+                    str(metrics["checkpoint_index"]),
+                    f"{float(metrics['success_rate']):.6f}",
+                    f"{float(metrics['best_reward_mean']):.6f}",
+                    f"{float(metrics['return_mean']):.6f}",
+                    str(metrics["num_episode"]),
+                    f"{float(metrics['time']):.6f}",
+                    str(metrics["checkpoint_path"]),
+                ]
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     args = parse_args()
     checkpoint_dir = Path(args.checkpoint_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    best_output_dir = output_dir / "best"
+    best_output_dir.mkdir(parents=True, exist_ok=True)
+    best_metrics_path = best_output_dir / "eval_metrics.json"
+    best_checkpoint_record = best_output_dir / "checkpoint.txt"
+    copy_target = (
+        Path(args.copy_best_to).expanduser().resolve()
+        if args.copy_best_to is not None
+        else output_dir / "best_checkpoint.pt"
+    )
+    copy_target.parent.mkdir(parents=True, exist_ok=True)
 
     selected = _collect_checkpoints(
         checkpoint_dir=checkpoint_dir,
@@ -183,14 +221,14 @@ def main() -> None:
         if best_metrics is None or _metric_rank(metrics) > _metric_rank(best_metrics):
             best_metrics = metrics
             best_checkpoint_path = checkpoint_path
+            best_metrics_path.write_text(json.dumps(best_metrics, indent=2), encoding="utf-8")
+            best_checkpoint_record.write_text(str(best_checkpoint_path), encoding="utf-8")
+            shutil.copy2(best_checkpoint_path, _success_copy_path(copy_target, float(best_metrics["success_rate"])))
+            shutil.copy2(best_checkpoint_path, copy_target)
 
     assert best_checkpoint_path is not None
     assert best_metrics is not None
 
-    best_output_dir = output_dir / "best"
-    best_output_dir.mkdir(parents=True, exist_ok=True)
-    best_metrics_path = best_output_dir / "eval_metrics.json"
-    best_checkpoint_record = best_output_dir / "checkpoint.txt"
     if args.video_checkpoints == "best":
         if not (
             args.skip_existing
@@ -221,12 +259,6 @@ def main() -> None:
         best_metrics_path.write_text(json.dumps(best_metrics, indent=2), encoding="utf-8")
         best_checkpoint_record.write_text(str(best_checkpoint_path), encoding="utf-8")
 
-    copy_target = (
-        Path(args.copy_best_to).expanduser().resolve()
-        if args.copy_best_to is not None
-        else output_dir / "best_checkpoint.pt"
-    )
-    copy_target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best_checkpoint_path, copy_target)
 
     summary = {
@@ -247,6 +279,9 @@ def main() -> None:
     }
     (output_dir / "checkpoint_metrics.json").write_text(
         json.dumps(all_metrics, indent=2), encoding="utf-8"
+    )
+    (output_dir / "checkpoint_metrics.tsv").write_text(
+        _format_metrics_log(all_metrics), encoding="utf-8"
     )
     (output_dir / "best_checkpoint.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
