@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional env.max_episode_steps override.",
     )
-    parser.add_argument("--every-n", type=int, default=1, help="Evaluate every Nth checkpoint index.")
+    parser.add_argument("--every-n", type=int, default=1, help="Evaluate every Nth checkpoint in sorted checkpoint order.")
     parser.add_argument("--start-index", type=int, default=None, help="Optional minimum checkpoint index.")
     parser.add_argument("--end-index", type=int, default=None, help="Optional maximum checkpoint index.")
     parser.add_argument(
