@@ -3,10 +3,10 @@ defaults:
 hydra:
   run:
     dir: ${logdir}
-_target_: agent.finetune.train_ppo_diffusion_agent.TrainPPODiffusionAgent
+_target_: agent.eval.eval_diffusion_agent.EvalDiffusionAgent
 
-name: square_d0_ft_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
-logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/finetune/square_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+name: square_d0_eval_rl_init_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
+logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/eval/square_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d0/override_base_policy_path.pt
 robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d0/env_meta.json
 normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d0/normalization.npz
@@ -21,6 +21,9 @@ ft_denoising_steps: 10
 cond_steps: 1
 horizon_steps: 4
 act_steps: 4
+
+n_steps: 400
+render_num: 0
 
 env:
   n_envs: 50
@@ -39,41 +42,6 @@ env:
       max_episode_steps: ${env.max_episode_steps}
       reset_within_step: True
 
-
-wandb:
-  entity: null
-  project: dppo-mimicgen-square_d0-finetune
-  run: ${now:%H-%M-%S}_${name}
-
-train:
-  n_train_itr: 201
-  n_critic_warmup_itr: 2
-  n_steps: 400
-  gamma: 0.999
-  actor_lr: 1e-4
-  actor_weight_decay: 0
-  actor_lr_scheduler:
-    first_cycle_steps: ${train.n_train_itr}
-    warmup_steps: 10
-    min_lr: 1e-4
-  critic_lr: 1e-3
-  critic_weight_decay: 0
-  critic_lr_scheduler:
-    first_cycle_steps: ${train.n_train_itr}
-    warmup_steps: 10
-    min_lr: 1e-3
-  save_model_freq: 100
-  val_freq: 10
-  render:
-    freq: 1
-    num: 0
-  reward_scale_running: True
-  reward_scale_const: 1.0
-  gae_lambda: 0.95
-  batch_size: 10000
-  update_epochs: 5
-  vf_coef: 0.5
-  target_kl: 1
 
 model:
   _target_: model.diffusion.diffusion_ppo.PPODiffusion
@@ -106,3 +74,4 @@ model:
   action_dim: ${action_dim}
   denoising_steps: ${denoising_steps}
   device: ${device}
+

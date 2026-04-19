@@ -37,7 +37,22 @@ train:
     first_cycle_steps: 1500
     warmup_steps: 100
     min_lr: 2e-05
-  save_model_freq: 500
+  save_model_freq: 50
+  checkpoint_eval:
+    enabled: False
+    script_path: /home/nelly/projects/rl-mimicgen/dppo/script/eval_checkpoint_sweep.py
+    config_dir: /home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d0
+    config_name: eval_diffusion_mlp
+    output_dir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/square_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/checkpoint_eval
+    device: ${device}
+    n_envs: 10
+    n_steps: 400
+    max_episode_steps: 400
+    every_n: 1
+    video_checkpoints: best
+    render_num: 1
+    skip_existing: True
+    copy_best_to: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/square_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/best_checkpoint.pt
 
 model:
   _target_: model.diffusion.diffusion.DiffusionModel
