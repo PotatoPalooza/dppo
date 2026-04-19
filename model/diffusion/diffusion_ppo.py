@@ -54,6 +54,29 @@ class PPODiffusion(VPGDiffusion):
         self.clip_advantage_lower_quantile = clip_advantage_lower_quantile
         self.clip_advantage_upper_quantile = clip_advantage_upper_quantile
 
+        # Pre-computed per-denoising-step discount and clip_ploss schedules.
+        # Avoids building a python list->tensor every forward pass.
+        with torch.no_grad():
+            k = int(self.ft_denoising_steps)
+            idx = torch.arange(k, device=self.device, dtype=torch.float32)
+            self.register_buffer(
+                "_gamma_denoising_lut",
+                (gamma_denoising ** (k - idx - 1.0)).detach(),
+                persistent=False,
+            )
+            if k > 1:
+                t_lut = idx / (k - 1)
+                clip_lut = self.clip_ploss_coef_base + (
+                    self.clip_ploss_coef - self.clip_ploss_coef_base
+                ) * (torch.exp(self.clip_ploss_coef_rate * t_lut) - 1) / (
+                    math.exp(self.clip_ploss_coef_rate) - 1
+                )
+            else:
+                clip_lut = torch.zeros(1, device=self.device, dtype=torch.float32)
+            self.register_buffer(
+                "_clip_ploss_lut", clip_lut.detach(), persistent=False
+            )
+
     def loss(
         self,
         obs,
@@ -134,37 +157,22 @@ class PPODiffusion(VPGDiffusion):
         advantage_max = torch.quantile(advantages, self.clip_advantage_upper_quantile)
         advantages = advantages.clamp(min=advantage_min, max=advantage_max)
 
-        # denoising discount
-        discount = torch.tensor(
-            [
-                self.gamma_denoising ** (self.ft_denoising_steps - i - 1)
-                for i in denoising_inds
-            ]
-        ).to(self.device)
-        advantages *= discount
+        # denoising discount — lookup instead of python list->tensor.
+        advantages = advantages * self._gamma_denoising_lut[denoising_inds]
 
         # get ratio
         logratio = newlogprobs - oldlogprobs
         ratio = logratio.exp()
 
-        # exponentially interpolate between the base and the current clipping value over denoising steps and repeat
-        t = (denoising_inds.float() / (self.ft_denoising_steps - 1)).to(self.device)
-        if self.ft_denoising_steps > 1:
-            clip_ploss_coef = self.clip_ploss_coef_base + (
-                self.clip_ploss_coef - self.clip_ploss_coef_base
-            ) * (torch.exp(self.clip_ploss_coef_rate * t) - 1) / (
-                math.exp(self.clip_ploss_coef_rate) - 1
-            )
-        else:
-            clip_ploss_coef = t
+        # exponentially interpolate between the base and the current clipping
+        # value over denoising steps — served from cached LUT.
+        clip_ploss_coef = self._clip_ploss_lut[denoising_inds]
 
-        # get kl difference and whether value clipped
+        # get kl difference and whether value clipped — tensors only here,
+        # caller accumulates + syncs once per update epoch.
         with torch.no_grad():
-            # old_approx_kl: the approximate Kullback–Leibler divergence, measured by (-logratio).mean(), which corresponds to the k1 estimator in John Schulman’s blog post on approximating KL http://joschu.net/blog/kl-approx.html
-            # approx_kl: better alternative to old_approx_kl measured by (logratio.exp() - 1) - logratio, which corresponds to the k3 estimator in approximating KL http://joschu.net/blog/kl-approx.html
-            # old_approx_kl = (-logratio).mean()
             approx_kl = ((ratio - 1) - logratio).mean()
-            clipfrac = ((ratio - 1.0).abs() > clip_ploss_coef).float().mean().item()
+            clipfrac = ((ratio - 1.0).abs() > clip_ploss_coef).float().mean()
 
         # Policy loss with clipping
         pg_loss1 = -advantages * ratio
@@ -192,8 +200,8 @@ class PPODiffusion(VPGDiffusion):
             entropy_loss,
             v_loss,
             clipfrac,
-            approx_kl.item(),
-            ratio.mean().item(),
+            approx_kl,
+            ratio.mean(),
             bc_loss,
-            eta.mean().item(),
+            eta.mean(),
         )

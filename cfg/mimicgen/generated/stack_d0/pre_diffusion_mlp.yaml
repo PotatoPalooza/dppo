@@ -5,14 +5,14 @@ hydra:
     dir: ${logdir}
 _target_: agent.pretrain.train_diffusion_agent.TrainDiffusionAgent
 
-name: coffee_d1_pre_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d1/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-train_dataset_path: /home/emily/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/train.npz
+name: stack_d0_pre_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/stack_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: /home/emily/rl-mimicgen/runs/official_dppo_mimicgen/data/stack_d0/train.npz
 
 seed: 42
 device: cuda:0
-env: coffee_d1
-obs_dim: 116
+env: stack_d0
+obs_dim: 68
 action_dim: 7
 denoising_steps: 20
 horizon_steps: 4
@@ -20,7 +20,7 @@ cond_steps: 1
 
 wandb:
   entity: null
-  project: dppo-mimicgen-coffee_d1-pretrain
+  project: dppo-mimicgen-stack_d0-pretrain
   run: ${now:%H-%M-%S}_${name}
 
 train:
@@ -40,10 +40,12 @@ train:
   save_model_freq: 50
   checkpoint_eval:
     enabled: False
+    async_enabled: True
+    async_queue_size: 2
     script_path: /home/emily/rl-mimicgen/resources/dppo/script/eval_checkpoint_sweep.py
-    config_dir: /home/emily/rl-mimicgen/resources/dppo/cfg/mimicgen/generated/coffee_d1
+    config_dir: /home/emily/rl-mimicgen/resources/dppo/cfg/mimicgen/generated/stack_d0
     config_name: eval_diffusion_mlp
-    output_dir: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d1/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/checkpoint_eval
+    output_dir: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/stack_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/checkpoint_eval
     device: ${device}
     n_envs: 10
     n_steps: 400
@@ -52,7 +54,7 @@ train:
     video_checkpoints: best
     render_num: 1
     skip_existing: True
-    copy_best_to: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d1/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/best_checkpoint.pt
+    copy_best_to: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/stack_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/best_checkpoint.pt
 
 model:
   _target_: model.diffusion.diffusion.DiffusionModel

@@ -35,8 +35,9 @@ class TrainDiffusionAgent(PreTrainAgent):
         cnt_batch = 0
         for _ in range(self.n_epochs):
 
-            # train
-            loss_train_epoch = []
+            # train — accumulate loss tensors on GPU; one sync per epoch
+            # instead of per batch. Matters at high batch counts per epoch.
+            loss_train_epoch: list[torch.Tensor] = []
             for batch_train in self.dataloader_train:
                 if self.dataset_train.device == "cpu":
                     batch_train = batch_to_device(batch_train, self.device)
@@ -45,7 +46,7 @@ class TrainDiffusionAgent(PreTrainAgent):
                 with self._autocast():
                     loss_train = self.model.loss(*batch_train)
                 loss_train.backward()
-                loss_train_epoch.append(loss_train.item())
+                loss_train_epoch.append(loss_train.detach())
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -54,10 +55,14 @@ class TrainDiffusionAgent(PreTrainAgent):
                 if cnt_batch % self.update_ema_freq == 0:
                     self.step_ema()
                 cnt_batch += 1
-            loss_train = np.mean(loss_train_epoch)
+            loss_train = (
+                float(torch.stack(loss_train_epoch).mean())
+                if loss_train_epoch
+                else float("nan")
+            )
 
             # validate
-            loss_val_epoch = []
+            loss_val_epoch: list[torch.Tensor] = []
             if self.dataloader_val is not None and self.epoch % self.val_freq == 0:
                 self.model.eval()
                 with torch.no_grad():
@@ -66,9 +71,13 @@ class TrainDiffusionAgent(PreTrainAgent):
                             batch_val = batch_to_device(batch_val, self.device)
                         with self._autocast():
                             loss_val = self.model.loss(*batch_val)
-                        loss_val_epoch.append(loss_val.item())
+                        loss_val_epoch.append(loss_val.detach())
                 self.model.train()
-            loss_val = np.mean(loss_val_epoch) if len(loss_val_epoch) > 0 else None
+            loss_val = (
+                float(torch.stack(loss_val_epoch).mean())
+                if loss_val_epoch
+                else None
+            )
 
             # update lr
             self.lr_scheduler.step()
@@ -79,22 +88,37 @@ class TrainDiffusionAgent(PreTrainAgent):
 
             # log loss
             if self.epoch % self.log_freq == 0:
+                epoch_time = timer()  # Timer resets on call → elapsed since last log
                 val_str = f" | val loss {loss_val:8.4f}" if loss_val is not None else ""
                 log.info(
-                    f"{self.epoch}: train loss {loss_train:8.4f}{val_str} | t:{timer():8.4f}"
+                    f"{self.epoch}: train loss {loss_train:8.4f}{val_str} | t:{epoch_time:8.4f}"
                 )
-                if self.use_wandb:
-                    if loss_val is not None:
-                        wandb.log(
-                            {"loss - val": loss_val}, step=self.epoch, commit=False
-                        )
-                    wandb.log(
-                        {
-                            "loss - train": loss_train,
-                        },
-                        step=self.epoch,
-                        commit=True,
+                payload = {
+                    "Loss/train": loss_train,
+                    "Loss/lr": float(self.optimizer.param_groups[0]["lr"]),
+                    "Perf/epoch_time": float(epoch_time),
+                    "Train/epoch": int(self.epoch),
+                    "Train/batches_seen": int(cnt_batch),
+                }
+                if loss_val is not None:
+                    payload["Loss/val"] = loss_val
+                if torch.cuda.is_available() and "cuda" in str(self.device):
+                    payload["System/gpu_memory_allocated_gb"] = float(
+                        torch.cuda.memory_allocated(self.device) / 1e9
                     )
+                    payload["System/gpu_memory_reserved_gb"] = float(
+                        torch.cuda.memory_reserved(self.device) / 1e9
+                    )
+                self._wandb_log(payload, epoch=self.epoch, commit=True)
+
+            # drain any async eval results posted since the last epoch;
+            # each result logs to wandb at its own (past) epoch via
+            # ``local_step``, not the current self.epoch.
+            self.drain_async_eval()
 
             # count
             self.epoch += 1
+
+        # training is done — block on any still-in-flight rollouts so
+        # their metrics/videos land in wandb before the run finishes.
+        self.shutdown_async_eval()

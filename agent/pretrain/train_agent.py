@@ -120,6 +120,25 @@ class PreTrainAgent:
         self.save_model_freq = cfg.train.save_model_freq
         self.checkpoint_eval_cfg = cfg.train.get("checkpoint_eval", None)
 
+        # Async checkpoint eval — lazy init (deferred to first save_model
+        # so we pass the current EMA state_dict into the worker).
+        self._async_eval_enabled = self._resolve_async_eval_enabled()
+        self._async_eval_manager = None
+        self._async_rollout_best: tuple[float, float, float] | None = None
+        self._async_rollout_best_epoch: int | None = None
+        if self._async_eval_enabled and self.use_wandb:
+            # Switch every metric to plot against ``local_step`` so
+            # async rollouts logged at past epochs don't try to go
+            # backwards in wandb's internal step (which is disallowed).
+            try:
+                wandb.define_metric("local_step")
+                wandb.define_metric("*", step_metric="local_step")
+            except Exception:
+                log.exception(
+                    "wandb.define_metric(local_step) failed; async eval "
+                    "results may plot on wandb's implicit step."
+                )
+
         # Build dataset
         self.dataset_train = hydra.utils.instantiate(cfg.train_dataset)
         self.dataloader_train = torch.utils.data.DataLoader(
@@ -162,6 +181,188 @@ class PreTrainAgent:
     def run(self):
         raise NotImplementedError
 
+    # ------------------------------------------------------------------
+    # Async checkpoint-eval integration
+    # ------------------------------------------------------------------
+
+    def _resolve_async_eval_enabled(self) -> bool:
+        eval_cfg = getattr(self, "checkpoint_eval_cfg", None)
+        if eval_cfg is None:
+            return False
+        if not eval_cfg.get("enabled", False):
+            return False
+        return bool(eval_cfg.get("async_enabled", False))
+
+    def _wandb_log(self, payload: dict, epoch: int, commit: bool = True) -> None:
+        """Wandb ``log`` helper that plays nicely with async past-epoch posts.
+
+        When async eval is on we rely on ``define_metric(step_metric=
+        'local_step')`` set at init, so all metrics get ``local_step``
+        added to the payload and ``step=`` is dropped (wandb disallows
+        going backwards in its internal step). When async is off we keep
+        upstream's existing ``step=epoch`` behavior bit-for-bit.
+        """
+        if not self.use_wandb:
+            return
+        try:
+            if self._async_eval_enabled:
+                payload = dict(payload)
+                payload["local_step"] = int(epoch)
+                wandb.log(payload, commit=commit)
+            else:
+                wandb.log(payload, step=int(epoch), commit=commit)
+        except Exception:
+            log.exception("wandb.log failed: %s", list(payload))
+
+    def _ensure_async_eval_manager(self) -> None:
+        if not self._async_eval_enabled or self._async_eval_manager is not None:
+            return
+        eval_cfg = self.checkpoint_eval_cfg
+        # Import lazily: the manager pulls in hydra/OmegaConf + the
+        # in-repo rl_mimicgen package, and we don't want to force those
+        # on non-async runs.
+        try:
+            from rl_mimicgen.dppo_async import AsyncCheckpointEvalManager
+        except Exception:
+            log.exception(
+                "Failed to import AsyncCheckpointEvalManager; "
+                "falling back to the subprocess eval path."
+            )
+            self._async_eval_enabled = False
+            return
+
+        video_dir = None
+        video_mode = str(eval_cfg.get("video_checkpoints", "none"))
+        save_video = video_mode != "none"
+        if save_video:
+            output_dir = eval_cfg.get("output_dir", None)
+            if output_dir is None:
+                output_dir = os.path.join(self.logdir, "checkpoint_eval")
+            video_dir = os.path.join(str(output_dir), "videos")
+
+        try:
+            self._async_eval_manager = AsyncCheckpointEvalManager(
+                eval_config_dir=eval_cfg.config_dir,
+                eval_config_name=eval_cfg.config_name,
+                initial_ema_state_dict=self.ema_model.state_dict(),
+                device=str(eval_cfg.get("device", self.device)),
+                video_dir=video_dir,
+                save_video=save_video,
+                render_num=eval_cfg.get("render_num", None),
+                n_envs=eval_cfg.get("n_envs", None),
+                n_steps=eval_cfg.get("n_steps", None),
+                n_episodes=eval_cfg.get("n_episodes", None),
+                max_episode_steps=eval_cfg.get("max_episode_steps", None),
+                queue_size=int(eval_cfg.get("async_queue_size", 2)),
+            )
+        except Exception:
+            log.exception(
+                "AsyncCheckpointEvalManager init failed; disabling "
+                "async eval for this run (subprocess path will be used)."
+            )
+            self._async_eval_manager = None
+            self._async_eval_enabled = False
+
+    def _consume_async_eval_results(self, results) -> None:
+        """Log + best-track every completed async eval result."""
+        for result in results:
+            if result.error is not None:
+                log.error(
+                    "Async eval for epoch %d failed: %s",
+                    result.epoch,
+                    result.error,
+                )
+                continue
+            metrics = result.metrics
+            log.info(
+                "Async eval @ epoch %d: success %.4f | return %.4f | "
+                "best %.4f | wall %.2fs",
+                result.epoch,
+                float(metrics.get("success_rate", 0.0)),
+                float(metrics.get("return_mean", 0.0)),
+                float(metrics.get("best_reward_mean", 0.0)),
+                float(result.wall_time),
+            )
+            self._wandb_log(
+                {
+                    "Eval/success_rate": float(metrics.get("success_rate", 0.0)),
+                    "Eval/mean_reward": float(metrics.get("return_mean", 0.0)),
+                    "Eval/mean_best_reward": float(
+                        metrics.get("best_reward_mean", 0.0)
+                    ),
+                    "Eval/episodes_completed": int(metrics.get("num_episode", 0)),
+                    "Perf/eval_wall_time": float(result.wall_time),
+                },
+                epoch=result.epoch,
+            )
+            for idx, video_path in enumerate(result.video_paths):
+                if not video_path or not os.path.isfile(video_path):
+                    continue
+                try:
+                    self._wandb_log(
+                        {
+                            f"Eval/video_{idx}": wandb.Video(
+                                video_path, fps=20, format="mp4"
+                            )
+                        },
+                        epoch=result.epoch,
+                    )
+                except Exception:
+                    log.exception(
+                        "wandb video log failed for %s", video_path
+                    )
+            self._maybe_save_best_async_result(result)
+
+    def _maybe_save_best_async_result(self, result) -> None:
+        """Save the exact-weight snapshot if this result improves the best."""
+        if result.ema_state_dict is None:
+            return
+        eval_cfg = self.checkpoint_eval_cfg
+        copy_best_to = (
+            eval_cfg.get("copy_best_to", None) if eval_cfg is not None else None
+        )
+        if copy_best_to is None:
+            return
+        metrics = result.metrics
+        rank = (
+            float(metrics.get("success_rate", 0.0)),
+            float(metrics.get("best_reward_mean", 0.0)),
+            float(metrics.get("return_mean", 0.0)),
+        )
+        if self._async_rollout_best is not None and rank <= self._async_rollout_best:
+            return
+        self._async_rollout_best = rank
+        self._async_rollout_best_epoch = int(result.epoch)
+        copy_best_to_path = Path(str(copy_best_to)).expanduser()
+        copy_best_to_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "epoch": int(result.epoch),
+                "ema": result.ema_state_dict,
+                "eval_metrics": metrics,
+            },
+            copy_best_to_path,
+        )
+        log.info(
+            "Saved best-so-far async-eval checkpoint (epoch=%d, success=%.4f) to %s",
+            int(result.epoch),
+            rank[0],
+            copy_best_to_path,
+        )
+
+    def drain_async_eval(self) -> None:
+        if self._async_eval_manager is None:
+            return
+        self._consume_async_eval_results(self._async_eval_manager.drain())
+
+    def shutdown_async_eval(self, timeout: float | None = None) -> None:
+        if self._async_eval_manager is None:
+            return
+        remaining = self._async_eval_manager.drain_blocking(timeout=timeout)
+        self._consume_async_eval_results(remaining)
+        self._async_eval_manager.close()
+        self._async_eval_manager = None
+
     def reset_parameters(self):
         self.ema_model.load_state_dict(self.model.state_dict())
 
@@ -190,6 +391,17 @@ class PreTrainAgent:
         eval_cfg = self.checkpoint_eval_cfg
         if eval_cfg is None or not eval_cfg.get("enabled", False):
             return
+
+        # Async path: hand the current EMA weights to the background
+        # manager instead of subprocess-running the sweep. We keep the
+        # subprocess fallback for ``async_enabled=False``.
+        if self._async_eval_enabled:
+            self._ensure_async_eval_manager()
+            if self._async_eval_manager is not None:
+                self._async_eval_manager.submit(
+                    self.epoch, self.ema_model.state_dict()
+                )
+                return
 
         repo_root = Path(__file__).resolve().parents[2]
         script_path = Path(

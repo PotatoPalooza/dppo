@@ -6,6 +6,7 @@ Pre-training Gaussian/GMM policy
 import logging
 import wandb
 import numpy as np
+import torch
 
 log = logging.getLogger(__name__)
 from util.timer import Timer
@@ -77,25 +78,38 @@ class TrainGaussianAgent(PreTrainAgent):
 
             # log loss
             if self.epoch % self.log_freq == 0:
+                epoch_time = timer()  # Timer resets on call → elapsed since last log
                 infos_str = " | ".join(
                     [f"{key}: {val:8.4f}" for key, val in infos_train.items()]
                 )
                 log.info(
-                    f"{self.epoch}: train loss {loss_train:8.4f} | {infos_str} | t:{timer():8.4f}"
+                    f"{self.epoch}: train loss {loss_train:8.4f} | {infos_str} | t:{epoch_time:8.4f}"
                 )
-                if self.use_wandb:
-                    if loss_val is not None:
-                        wandb.log(
-                            {"loss - val": loss_val}, step=self.epoch, commit=False
-                        )
-                    wandb.log(
-                        {
-                            "loss - train": loss_train,
-                            "entropy - train": ent_train,
-                        },
-                        step=self.epoch,
-                        commit=True,
+                payload = {
+                    "Loss/train": float(loss_train),
+                    "Loss/entropy": float(ent_train),
+                    "Loss/lr": float(self.optimizer.param_groups[0]["lr"]),
+                    "Perf/epoch_time": float(epoch_time),
+                    "Train/epoch": int(self.epoch),
+                    "Train/batches_seen": int(cnt_batch),
+                }
+                if loss_val is not None:
+                    payload["Loss/val"] = float(loss_val)
+                if torch.cuda.is_available() and "cuda" in str(self.device):
+                    payload["System/gpu_memory_allocated_gb"] = float(
+                        torch.cuda.memory_allocated(self.device) / 1e9
                     )
+                    payload["System/gpu_memory_reserved_gb"] = float(
+                        torch.cuda.memory_reserved(self.device) / 1e9
+                    )
+                self._wandb_log(payload, epoch=self.epoch, commit=True)
+
+            # drain any async eval results posted since the last epoch
+            self.drain_async_eval()
 
             # count
             self.epoch += 1
+
+        # training is done — block on any still-in-flight rollouts so
+        # their metrics/videos land in wandb before the run finishes.
+        self.shutdown_async_eval()

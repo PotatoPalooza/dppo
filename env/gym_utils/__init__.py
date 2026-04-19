@@ -69,6 +69,44 @@ def make_async(
           dtype=float32)
     """
 
+    if env_type == "warp":
+        from rl_mimicgen.dppo_warp.warp_vector_env import WarpRobomimicVectorEnv
+
+        low_dim_keys = list(wrappers.robomimic_lowdim.low_dim_keys) if wrappers is not None else []
+        normalization_path_local = (
+            getattr(wrappers.robomimic_lowdim, "normalization_path", None)
+            if wrappers is not None
+            else None
+        )
+        if normalization_path_local is None:
+            normalization_path_local = kwargs.get("normalization_path")
+        if normalization_path_local is None:
+            raise ValueError(
+                "env_type='warp' requires wrappers.robomimic_lowdim.normalization_path "
+                "or a top-level normalization_path kwarg."
+            )
+        if robomimic_env_cfg_path is None:
+            raise ValueError("env_type='warp' requires robomimic_env_cfg_path.")
+        multi_step_cfg = getattr(wrappers, "multi_step", None) if wrappers is not None else None
+        n_obs_steps = int(multi_step_cfg.n_obs_steps) if multi_step_cfg is not None else int(obs_steps)
+        n_action_steps = int(multi_step_cfg.n_action_steps) if multi_step_cfg is not None else int(act_steps)
+        warp_cfg = kwargs.get("warp_cfg", {}) or {}
+        return WarpRobomimicVectorEnv(
+            robomimic_env_cfg_path=robomimic_env_cfg_path,
+            normalization_path=normalization_path_local,
+            low_dim_keys=low_dim_keys,
+            num_envs=num_envs,
+            max_episode_steps=max_episode_steps if max_episode_steps is not None else 400,
+            n_obs_steps=n_obs_steps,
+            n_action_steps=n_action_steps,
+            reward_shaping=reward_shaping,
+            save_video=bool(render_offscreen),
+            warp_graph_capture=bool(warp_cfg.get("graph_capture", False)),
+            njmax_per_env=warp_cfg.get("njmax_per_env"),
+            naconmax_per_env=warp_cfg.get("naconmax_per_env"),
+            physics_timestep=warp_cfg.get("physics_timestep"),
+        )
+
     if env_type == "furniture":
         from furniture_bench.envs.observation import DEFAULT_STATE_OBS
         from furniture_bench.envs.furniture_rl_sim_env import FurnitureRLSimEnv

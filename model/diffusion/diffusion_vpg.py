@@ -146,23 +146,34 @@ class VPGDiffusion(DiffusionModel):
         index=None,
         use_base_policy=False,
         deterministic=False,
+        actor_override=None,
     ):
-        noise = self.actor(x, t, cond=cond)
-        if self.use_ddim:
-            ft_indices = torch.where(
-                index >= (self.ddim_steps - self.ft_denoising_steps)
-            )[0]
+        """Compute mean/logvar/etas for the denoising step.
+
+        ``actor_override`` skips the ``ft_indices`` dance when the caller
+        already knows which actor to use for this entire batch (the
+        sampling path — ``VPGDiffusion.forward`` — has ``t`` as a Python
+        scalar so it can pick the actor once without a GPU sync).
+        """
+        if actor_override is not None:
+            noise = actor_override(x, t, cond=cond)
         else:
-            ft_indices = torch.where(t < self.ft_denoising_steps)[0]
+            noise = self.actor(x, t, cond=cond)
+            if self.use_ddim:
+                ft_indices = torch.where(
+                    index >= (self.ddim_steps - self.ft_denoising_steps)
+                )[0]
+            else:
+                ft_indices = torch.where(t < self.ft_denoising_steps)[0]
 
-        # Use base policy to query expert model, e.g. for imitation loss
-        actor = self.actor if use_base_policy else self.actor_ft
+            # Use base policy to query expert model, e.g. for imitation loss
+            actor = self.actor if use_base_policy else self.actor_ft
 
-        # overwrite noise for fine-tuning steps
-        if len(ft_indices) > 0:
-            cond_ft = {key: cond[key][ft_indices] for key in cond}
-            noise_ft = actor(x[ft_indices], t[ft_indices], cond=cond_ft)
-            noise[ft_indices] = noise_ft
+            # overwrite noise for fine-tuning steps
+            if len(ft_indices) > 0:
+                cond_ft = {key: cond[key][ft_indices] for key in cond}
+                noise_ft = actor(x[ft_indices], t[ft_indices], cond=cond_ft)
+                noise[ft_indices] = noise_ft
 
         # Predict x_0
         if self.predict_epsilon:
@@ -270,6 +281,18 @@ class VPGDiffusion(DiffusionModel):
         for i, t in enumerate(t_all):
             t_b = make_timesteps(B, t, device)
             index_b = make_timesteps(B, i, device)
+            # ``t`` is a Python int here (DDPM) or the DDIM ``t`` tensor-
+            # scalar. Pick which actor handles this entire batch so we
+            # avoid the ``torch.where(t < ft_denoising_steps)`` sync and
+            # the second forward pass inside ``p_mean_var``.
+            if self.use_ddim:
+                is_ft_step = i >= (self.ddim_steps - self.ft_denoising_steps)
+            else:
+                is_ft_step = int(t) < self.ft_denoising_steps
+            if use_base_policy:
+                actor_override = self.actor
+            else:
+                actor_override = self.actor_ft if is_ft_step else self.actor
             mean, logvar, _ = self.p_mean_var(
                 x=x,
                 t=t_b,
@@ -277,6 +300,7 @@ class VPGDiffusion(DiffusionModel):
                 index=index_b,
                 use_base_policy=use_base_policy,
                 deterministic=deterministic,
+                actor_override=actor_override,
             )
             std = torch.exp(0.5 * logvar)
 

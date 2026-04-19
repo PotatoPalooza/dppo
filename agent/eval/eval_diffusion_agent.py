@@ -11,6 +11,7 @@ import logging
 log = logging.getLogger(__name__)
 from util.timer import Timer
 from agent.eval.eval_agent import EvalAgent
+from model.diffusion.diffusion import _strip_compiled_prefix
 
 
 def _coerce_success_flag(value) -> bool:
@@ -28,18 +29,68 @@ class EvalDiffusionAgent(EvalAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
 
+    @torch.no_grad()
+    def load_pretrain_state_dict(self, state_dict: dict) -> None:
+        """Load a pretrain-style state_dict (keys prefixed with ``network.``
+        or ``_orig_mod.network.``) into ``self.model.actor``.
+
+        Mirrors the ``network.*`` fallback branch of
+        ``DiffusionEval.__init__`` — used by the async eval manager to push
+        fresh EMA weights into the persistent eval agent without going
+        through a disk checkpoint.
+        """
+        stripped = _strip_compiled_prefix(state_dict)
+        base_weights = {
+            key.removeprefix("network."): value
+            for key, value in stripped.items()
+            if key.startswith("network.")
+        }
+        if not base_weights:
+            raise ValueError(
+                "load_pretrain_state_dict: no 'network.*' keys found in state dict"
+            )
+        self.model.actor.load_state_dict(base_weights, strict=True)
+
     def run(self):
+        metrics, _ = self.run_return_metrics()
+        np.savez(
+            self.result_path,
+            num_episode=metrics["num_episode"],
+            eval_success_rate=metrics["success_rate"],
+            eval_episode_reward=metrics["return_mean"],
+            eval_best_reward=metrics["best_reward_mean"],
+            time=metrics["time"],
+        )
+
+    def run_return_metrics(
+        self,
+        video_dir: str | None = None,
+        video_prefix: str = "eval_trial",
+    ) -> tuple[dict, list[str]]:
+        """Run a rollout and return (metrics_dict, video_paths).
+
+        ``metrics_dict`` keys: num_episode, success_rate, return_mean,
+        best_reward_mean, time. ``video_paths`` lists any videos that were
+        written (empty if rendering is off). When ``video_dir`` is None,
+        videos land in ``self.render_dir`` (the original behavior); pass
+        a distinct dir per call to disambiguate async-logged videos.
+        """
 
         # Start training loop
         timer = Timer()
 
         # Prepare video paths for each envs --- only applies for the first set of episodes if allowing reset within iteration and each iteration has multiple episodes from one env
         options_venv = [{} for _ in range(self.n_envs)]
+        video_paths: list[str] = []
+        effective_video_dir = video_dir if video_dir is not None else self.render_dir
         if self.render_video:
+            os.makedirs(effective_video_dir, exist_ok=True)
             for env_ind in range(self.n_render):
-                options_venv[env_ind]["video_path"] = os.path.join(
-                    self.render_dir, f"eval_trial-{env_ind}.mp4"
+                video_path = os.path.join(
+                    effective_video_dir, f"{video_prefix}-{env_ind}.mp4"
                 )
+                options_venv[env_ind]["video_path"] = video_path
+                video_paths.append(video_path)
 
         # Reset env before iteration starts
         self.model.eval()
@@ -177,16 +228,16 @@ class EvalDiffusionAgent(EvalAgent):
                 itr=0,
             )
 
-        # Log loss and save metrics
+        # Log loss and build metrics dict
         time = timer()
         log.info(
             f"eval: num episode {num_episode_finished:4d} | success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
         )
-        np.savez(
-            self.result_path,
-            num_episode=num_episode_finished,
-            eval_success_rate=success_rate,
-            eval_episode_reward=avg_episode_reward,
-            eval_best_reward=avg_best_reward,
-            time=time,
-        )
+        metrics = {
+            "num_episode": int(num_episode_finished),
+            "success_rate": float(success_rate),
+            "return_mean": float(avg_episode_reward),
+            "best_reward_mean": float(avg_best_reward),
+            "time": float(time),
+        }
+        return metrics, video_paths

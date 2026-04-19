@@ -45,6 +45,8 @@ class TrainAgent:
         # Make vectorized env
         self.env_name = cfg.env.name
         env_type = cfg.env.get("env_type", None)
+        warp_cfg_node = cfg.env.get("warp", None)
+        warp_cfg = OmegaConf.to_container(warp_cfg_node, resolve=True) if warp_cfg_node is not None else {}
         self.venv = make_async(
             cfg.env.name,
             env_type=env_type,
@@ -59,6 +61,7 @@ class TrainAgent:
             render_offscreen=cfg.env.get("save_video", False),
             obs_dim=cfg.obs_dim,
             action_dim=cfg.action_dim,
+            warp_cfg=warp_cfg,
             **cfg.env.specific if "specific" in cfg.env else {},
         )
         if not env_type == "furniture":

@@ -6,10 +6,10 @@ hydra:
 _target_: agent.eval.eval_diffusion_agent.EvalDiffusionAgent
 
 name: coffee_d1_eval_bc_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
-logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/eval/coffee_d1/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/override_base_policy_path.pt
-robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/env_meta.json
-normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/normalization.npz
+logdir: /home/emily/rl-mimicgen/logs/official_dppo/mimicgen/eval/coffee_d1/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: /home/emily/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/override_base_policy_path.pt
+robomimic_env_cfg_path: /home/emily/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/env_meta.json
+normalization_path: /home/emily/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d1/normalization.npz
 
 seed: 42
 device: cuda:0
