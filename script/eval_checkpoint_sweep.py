@@ -74,7 +74,7 @@ def _collect_checkpoints(
     start_index: int | None,
     end_index: int | None,
 ) -> list[tuple[int, Path]]:
-    selected: list[tuple[int, Path]] = []
+    available: list[tuple[int, Path]] = []
     for path in sorted(checkpoint_dir.glob("state_*.pt")):
         index = _checkpoint_index(path)
         if index is None:
@@ -83,10 +83,10 @@ def _collect_checkpoints(
             continue
         if end_index is not None and index > end_index:
             continue
-        if every_n > 1 and index % every_n != 0:
-            continue
-        selected.append((index, path))
-    return selected
+        available.append((index, path))
+    if every_n <= 1:
+        return available
+    return [item for ordinal, item in enumerate(available) if ordinal % every_n == 0]
 
 
 def _metric_rank(metrics: dict[str, float | int | str]) -> tuple[float, float, float]:
