@@ -1,0 +1,31 @@
+{
+  "dataset_id": "square_d2",
+  "source_hdf5": "/home/nelly/projects/rl-mimicgen/runs/datasets/core/square_d2.hdf5",
+  "artifact_dir": "/home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d2",
+  "config_dir": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2",
+  "log_root": "/home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen",
+  "env_name": "Square_D2",
+  "obs_dim": 62,
+  "action_dim": 7,
+  "horizon": 400,
+  "low_dim_keys": [
+    "object",
+    "robot0_eef_pos",
+    "robot0_eef_quat",
+    "robot0_eef_vel_ang",
+    "robot0_eef_vel_lin",
+    "robot0_gripper_qpos",
+    "robot0_gripper_qvel",
+    "robot0_joint_pos",
+    "robot0_joint_pos_cos",
+    "robot0_joint_pos_sin",
+    "robot0_joint_vel"
+  ],
+  "configs": {
+    "pre_diffusion_mlp.yaml": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2/pre_diffusion_mlp.yaml",
+    "ft_ppo_diffusion_mlp.yaml": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2/ft_ppo_diffusion_mlp.yaml",
+    "eval_diffusion_mlp.yaml": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2/eval_diffusion_mlp.yaml",
+    "eval_bc_diffusion_mlp.yaml": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2/eval_bc_diffusion_mlp.yaml",
+    "eval_rl_init_diffusion_mlp.yaml": "/home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/square_d2/eval_rl_init_diffusion_mlp.yaml"
+  }
+}

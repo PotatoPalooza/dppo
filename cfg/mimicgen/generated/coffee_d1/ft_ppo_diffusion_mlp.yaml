@@ -54,13 +54,13 @@ train:
   actor_weight_decay: 0
   actor_lr_scheduler:
     first_cycle_steps: ${train.n_train_itr}
-    warmup_steps: 0
+    warmup_steps: 10
     min_lr: 1e-4
   critic_lr: 1e-3
   critic_weight_decay: 0
   critic_lr_scheduler:
     first_cycle_steps: ${train.n_train_itr}
-    warmup_steps: 0
+    warmup_steps: 10
     min_lr: 1e-3
   save_model_freq: 100
   val_freq: 10
@@ -71,7 +71,7 @@ train:
   reward_scale_const: 1.0
   gae_lambda: 0.95
   batch_size: 10000
-  update_epochs: 10
+  update_epochs: 5
   vf_coef: 0.5
   target_kl: 1
 

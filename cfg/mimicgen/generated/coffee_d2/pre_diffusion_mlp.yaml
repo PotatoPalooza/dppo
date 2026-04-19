@@ -1,0 +1,85 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.pretrain.train_diffusion_agent.TrainDiffusionAgent
+
+name: coffee_d2_pre_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d2/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+train_dataset_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d2/train.npz
+
+seed: 42
+device: cuda:0
+env: coffee_d2
+obs_dim: 116
+action_dim: 7
+denoising_steps: 20
+horizon_steps: 4
+cond_steps: 1
+
+wandb:
+  entity: null
+  project: dppo-mimicgen-coffee_d2-pretrain
+  run: ${now:%H-%M-%S}_${name}
+
+train:
+  n_epochs: 1500
+  batch_size: 2048
+  num_workers: 0
+  learning_rate: 0.0002
+  weight_decay: 1e-6
+  train_split: 0.95
+  val_freq: 10
+  use_bf16: True
+  use_compile: True
+  lr_scheduler:
+    first_cycle_steps: 1500
+    warmup_steps: 100
+    min_lr: 2e-05
+  save_model_freq: 50
+  checkpoint_eval:
+    enabled: False
+    script_path: /home/nelly/projects/rl-mimicgen/dppo/script/eval_checkpoint_sweep.py
+    config_dir: /home/nelly/projects/rl-mimicgen/dppo/cfg/mimicgen/generated/coffee_d2
+    config_name: eval_diffusion_mlp
+    output_dir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d2/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/checkpoint_eval
+    device: ${device}
+    n_envs: 10
+    n_steps: 400
+    max_episode_steps: 400
+    every_n: 1
+    video_checkpoints: best
+    render_num: 1
+    skip_existing: True
+    copy_best_to: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/pretrain/coffee_d2/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}/best_checkpoint.pt
+
+model:
+  _target_: model.diffusion.diffusion.DiffusionModel
+  predict_epsilon: True
+  denoised_clip_value: 1.0
+  network:
+    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
+    time_dim: 32
+    mlp_dims: [1024, 1024, 1024]
+    cond_mlp_dims: [512, 64]
+    residual_style: True
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    action_dim: ${action_dim}
+  horizon_steps: ${horizon_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  denoising_steps: ${denoising_steps}
+  device: ${device}
+
+ema:
+  decay: 0.995
+
+train_dataset:
+  _target_: agent.dataset.sequence.StitchedSequenceDataset
+  dataset_path: ${train_dataset_path}
+  horizon_steps: ${horizon_steps}
+  cond_steps: ${cond_steps}
+  max_n_episodes: 1000
+  device: ${device}

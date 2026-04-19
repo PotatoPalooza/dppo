@@ -5,16 +5,16 @@ hydra:
     dir: ${logdir}
 _target_: agent.finetune.train_ppo_diffusion_agent.TrainPPODiffusionAgent
 
-name: coffee_d0_ft_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
-logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/finetune/coffee_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/override_base_policy_path.pt
-robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/env_meta.json
-normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/normalization.npz
+name: square_d2_ft_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
+logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/finetune/square_d2/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d2/override_base_policy_path.pt
+robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d2/env_meta.json
+normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/square_d2/normalization.npz
 
 seed: 42
 device: cuda:0
-env_name: coffee_d0
-obs_dim: 116
+env_name: square_d2
+obs_dim: 62
 action_dim: 7
 denoising_steps: 20
 ft_denoising_steps: 10
@@ -32,7 +32,7 @@ env:
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}
-      low_dim_keys: ["object", "robot0_eef_pos", "robot0_eef_pos_rel_pod", "robot0_eef_pos_rel_pod_holder", "robot0_eef_quat", "robot0_eef_quat_rel_pod", "robot0_eef_quat_rel_pod_holder", "robot0_eef_vel_ang", "robot0_eef_vel_lin", "robot0_gripper_qpos", "robot0_gripper_qvel", "robot0_joint_pos", "robot0_joint_pos_cos", "robot0_joint_pos_sin", "robot0_joint_vel"]
+      low_dim_keys: ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_eef_vel_ang", "robot0_eef_vel_lin", "robot0_gripper_qpos", "robot0_gripper_qvel", "robot0_joint_pos", "robot0_joint_pos_cos", "robot0_joint_pos_sin", "robot0_joint_vel"]
     multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}
@@ -42,7 +42,7 @@ env:
 
 wandb:
   entity: null
-  project: dppo-mimicgen-coffee_d0-finetune
+  project: dppo-mimicgen-square_d2-finetune
   run: ${now:%H-%M-%S}_${name}
 
 train:

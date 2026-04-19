@@ -5,15 +5,15 @@ hydra:
     dir: ${logdir}
 _target_: agent.finetune.train_ppo_diffusion_agent.TrainPPODiffusionAgent
 
-name: coffee_d0_ft_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
-logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/finetune/coffee_d0/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/override_base_policy_path.pt
-robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/env_meta.json
-normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d0/normalization.npz
+name: coffee_d2_ft_diffusion_mlp_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}
+logdir: /home/nelly/projects/rl-mimicgen/logs/official_dppo/mimicgen/finetune/coffee_d2/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d2/override_base_policy_path.pt
+robomimic_env_cfg_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d2/env_meta.json
+normalization_path: /home/nelly/projects/rl-mimicgen/runs/official_dppo_mimicgen/data/coffee_d2/normalization.npz
 
 seed: 42
 device: cuda:0
-env_name: coffee_d0
+env_name: coffee_d2
 obs_dim: 116
 action_dim: 7
 denoising_steps: 20
@@ -42,7 +42,7 @@ env:
 
 wandb:
   entity: null
-  project: dppo-mimicgen-coffee_d0-finetune
+  project: dppo-mimicgen-coffee_d2-finetune
   run: ${now:%H-%M-%S}_${name}
 
 train:
