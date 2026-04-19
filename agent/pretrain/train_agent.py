@@ -72,12 +72,17 @@ class PreTrainAgent:
         # Wandb
         self.use_wandb = cfg.wandb is not None
         if cfg.wandb is not None:
-            wandb.init(
-                entity=cfg.wandb.entity,
-                project=cfg.wandb.project,
-                name=cfg.wandb.run,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
+            self._install_safe_wandb_logging()
+            try:
+                wandb.init(
+                    entity=cfg.wandb.entity,
+                    project=cfg.wandb.project,
+                    name=cfg.wandb.run,
+                    config=OmegaConf.to_container(cfg, resolve=True),
+                )
+            except Exception:
+                self.use_wandb = False
+                log.exception("wandb.init failed; disabling W&B logging for this run.")
 
         # Build model
         self.model = hydra.utils.instantiate(cfg.model)
@@ -121,6 +126,23 @@ class PreTrainAgent:
                 shuffle=True,
                 pin_memory=True if self.dataset_val.device == "cpu" else False,
             )
+
+    def _install_safe_wandb_logging(self) -> None:
+        if hasattr(wandb, "_rl_mimicgen_safe_log_installed"):
+            return
+
+        wandb._rl_mimicgen_original_log = wandb.log
+
+        def _safe_log(*args, **kwargs):
+            try:
+                return wandb._rl_mimicgen_original_log(*args, **kwargs)
+            except Exception:
+                self.use_wandb = False
+                log.exception("wandb.log failed; disabling W&B logging for the rest of this run.")
+                return None
+
+        wandb.log = _safe_log
+        wandb._rl_mimicgen_safe_log_installed = True
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=cfg.train.learning_rate,
