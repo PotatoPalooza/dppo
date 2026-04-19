@@ -40,6 +40,11 @@ class TrainAgent:
                     name=cfg.wandb.run,
                     config=OmegaConf.to_container(cfg, resolve=True),
                 )
+                wandb.define_metric("iteration")
+                wandb.define_metric("env_step")
+                wandb.define_metric("train/*", step_metric="iteration")
+                wandb.define_metric("eval/*", step_metric="iteration")
+                wandb.define_metric("charts/*", step_metric="iteration")
             except Exception:
                 self.use_wandb = False
                 log.exception("wandb.init failed; disabling W&B logging for this run.")
