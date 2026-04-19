@@ -22,6 +22,7 @@ horizon_steps: 4
 act_steps: 4
 ft_denoising_steps: 0
 
+n_episodes: 20
 n_steps: 400
 render_num: 0
 

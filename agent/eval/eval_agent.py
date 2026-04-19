@@ -70,6 +70,7 @@ class EvalAgent:
 
         # Eval params
         self.n_steps = cfg.n_steps
+        self.n_episodes = cfg.get("n_episodes", None)
         self.best_reward_threshold_for_success = (
             len(self.venv.pairs_to_assemble)
             if env_type == "furniture"

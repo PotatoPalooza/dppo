@@ -57,6 +57,8 @@ class EvalDiffusionAgent(EvalAgent):
             obs_full_trajs = np.vstack(
                 (obs_full_trajs, prev_obs_venv["state"][:, -1][None])
             )
+        steps_collected = 0
+        completed_episodes = 0
 
         # Collect a set of trajectories from env
         for step in range(self.n_steps):
@@ -81,7 +83,8 @@ class EvalDiffusionAgent(EvalAgent):
                 self.venv.step(action_venv)
             )
             reward_trajs[step] = reward_venv
-            firsts_trajs[step + 1] = terminated_venv | truncated_venv
+            done_venv = terminated_venv | truncated_venv
+            firsts_trajs[step + 1] = done_venv
             if success_trajs is not None:
                 success_trajs[step] = np.asarray(
                     [
@@ -100,8 +103,16 @@ class EvalDiffusionAgent(EvalAgent):
 
             # update for next step
             prev_obs_venv = obs_venv
+            steps_collected = step + 1
+            completed_episodes += int(np.sum(done_venv))
+            if self.n_episodes is not None and completed_episodes >= self.n_episodes:
+                break
 
         # Summarize episode reward --- this needs to be handled differently depending on whether the environment is reset after each iteration. Only count episodes that finish within the iteration.
+        firsts_trajs = firsts_trajs[: steps_collected + 1]
+        reward_trajs = reward_trajs[:steps_collected]
+        if success_trajs is not None:
+            success_trajs = success_trajs[:steps_collected]
         episodes_start_end = []
         for env_ind in range(self.n_envs):
             env_steps = np.where(firsts_trajs[:, env_ind] == 1)[0]
@@ -110,6 +121,9 @@ class EvalDiffusionAgent(EvalAgent):
                 end = env_steps[i + 1]
                 if end - start > 1:
                     episodes_start_end.append((env_ind, start, end - 1))
+        episodes_start_end.sort(key=lambda item: (item[2], item[0], item[1]))
+        if self.n_episodes is not None:
+            episodes_start_end = episodes_start_end[: self.n_episodes]
         if len(episodes_start_end) > 0:
             reward_trajs_split = [
                 reward_trajs[start : end + 1, env_ind]

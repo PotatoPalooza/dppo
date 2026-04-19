@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Directory for per-checkpoint eval outputs and summary.")
     parser.add_argument("--device", default="cuda:0", help="Device override passed into the eval config.")
     parser.add_argument("--n-envs", type=int, default=None, help="Optional eval env count override.")
+    parser.add_argument("--n-episodes", type=int, default=None, help="Optional completed-episode target override.")
     parser.add_argument("--n-steps", type=int, default=None, help="Optional eval rollout length override.")
     parser.add_argument(
         "--max-episode-steps",
@@ -127,6 +128,8 @@ def _run_eval(
     ]
     if args.n_envs is not None:
         command.append(f"env.n_envs={args.n_envs}")
+    if args.n_episodes is not None:
+        command.append(f"n_episodes={args.n_episodes}")
     if args.n_steps is not None:
         command.append(f"n_steps={args.n_steps}")
     if args.max_episode_steps is not None:
@@ -233,6 +236,7 @@ def main() -> None:
         "output_dir": str(output_dir),
         "device": args.device,
         "n_envs": args.n_envs,
+        "n_episodes": args.n_episodes,
         "n_steps": args.n_steps,
         "max_episode_steps": args.max_episode_steps,
         "every_n": args.every_n,
