@@ -160,10 +160,9 @@ def make_async(
                 use_image_obs=use_image_obs,
                 # render_gpu_device_id=0,
             )
-            # Robosuite's hard reset causes excessive memory consumption.
-            # Disabled to run more envs.
-            # https://github.com/ARISE-Initiative/robosuite/blob/92abf5595eddb3a845cd1093703e5a3ccd01e77e/robosuite/environments/base.py#L247-L248
-            env.env.hard_reset = False
+            # Keep this configurable because some MimicGen / robomimic low-dim tasks
+            # appear to corrupt long-lived worker state under repeated soft resets.
+            env.env.hard_reset = robomimic_hard_reset
         else:  # d3il, gym
             if "kitchen" not in id:  # d4rl kitchen does not support rendering!
                 kwargs["render"] = render

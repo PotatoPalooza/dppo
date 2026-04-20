@@ -1,3 +1,6 @@
+# Generated from rl_mimicgen.adapters.dppo_lowdim.
+# On another machine, rerun `scripts/run_official_dppo_mimicgen.py prepare --task ...`
+# to rewrite machine-local absolute paths such as `robomimic_env_cfg_path`.
 defaults:
   - _self_
 hydra:
