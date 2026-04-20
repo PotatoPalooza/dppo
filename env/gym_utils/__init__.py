@@ -11,6 +11,7 @@ def make_async(
     id,
     num_envs=1,
     asynchronous=True,
+    context=None,
     wrappers=None,
     render=False,
     obs_dim=23,
@@ -33,6 +34,7 @@ def make_async(
     render_offscreen=False,
     reward_shaping=False,
     shape_meta=None,
+    robomimic_hard_reset=False,
     **kwargs,
 ):
     """Create a vectorized environment from multiple copies of an environment,
@@ -223,6 +225,7 @@ def make_async(
             dummy_env_fn=(
                 dummy_env_fn if render or render_offscreen or use_image_obs else None
             ),
+            context=context,
             delay_init="avoiding" in id,  # add delay for D3IL initialization
         )
         if asynchronous

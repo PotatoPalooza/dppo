@@ -57,6 +57,7 @@ class TrainAgent:
             env_type=env_type,
             num_envs=cfg.env.n_envs,
             asynchronous=True,
+            context=cfg.env.get("multiprocessing_context", None),
             max_episode_steps=cfg.env.max_episode_steps,
             wrappers=cfg.env.get("wrappers", None),
             robomimic_env_cfg_path=cfg.get("robomimic_env_cfg_path", None),

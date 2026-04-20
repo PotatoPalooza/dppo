@@ -17,6 +17,7 @@ import numpy as np
 import multiprocessing as mp
 import time
 import sys
+import traceback
 from enum import Enum
 from copy import deepcopy
 import time
@@ -643,17 +644,22 @@ class AsyncVectorEnv(VectorEnv):
 
         num_errors = self.num_envs - sum(successes)
         assert num_errors > 0
+        last_error = None
         for _ in range(num_errors):
-            index, exctype, value = self.error_queue.get()
+            index, exc_name, message, tb = self.error_queue.get()
             logger.error(
-                f"Received the following error from Worker-{index}: {exctype.__name__}: {value}"
+                f"Received the following error from Worker-{index}: {exc_name}: {message}\n{tb}"
             )
             logger.error(f"Shutting down Worker-{index}.")
             self.parent_pipes[index].close()
             self.parent_pipes[index] = None
+            last_error = (index, exc_name, message, tb)
 
         logger.error("Raising the last exception back to the main process.")
-        raise exctype(value)
+        index, exc_name, message, tb = last_error
+        raise RuntimeError(
+            f"Worker-{index} raised {exc_name}: {message}\n{tb}"
+        )
 
     def __del__(self):
         if not getattr(self, "closed", True):
@@ -764,8 +770,15 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
                     "be one of {`reset`, `step`, `seed`, `close`, `_call`, "
                     "`_setattr`, `_check_spaces`}."
                 )
-    except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+    except (KeyboardInterrupt, Exception) as exc:
+        error_queue.put(
+            (
+                index,
+                type(exc).__name__,
+                str(exc),
+                traceback.format_exc(),
+            )
+        )
         pipe.send((None, False))
     finally:
         env.close()
@@ -833,8 +846,15 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                     "be one of {`reset`, `step`, `seed`, `close`, `_call`, "
                     "`_setattr`, `_check_spaces`}."
                 )
-    except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+    except (KeyboardInterrupt, Exception) as exc:
+        error_queue.put(
+            (
+                index,
+                type(exc).__name__,
+                str(exc),
+                traceback.format_exc(),
+            )
+        )
         pipe.send((None, False))
     finally:
         env.close()
