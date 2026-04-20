@@ -41,6 +41,9 @@ class TrainAgent:
             except Exception:
                 self.use_wandb = False
                 log.exception("wandb.init failed; disabling W&B logging for this run.")
+        self._log_model_artifacts = (
+            bool(cfg.wandb.get("log_model", True)) if cfg.wandb is not None else False
+        )
 
         # Make vectorized env
         self.env_name = cfg.env.name
@@ -158,6 +161,38 @@ class TrainAgent:
         savepath = os.path.join(self.checkpoint_dir, f"state_{self.itr}.pt")
         torch.save(data, savepath)
         log.info(f"Saved model to {savepath}")
+        self._log_checkpoint_artifact(savepath, self.itr)
+
+    def _log_checkpoint_artifact(
+        self,
+        path,
+        step: int,
+        extra_aliases: list[str] | None = None,
+    ) -> None:
+        """Upload a checkpoint file to wandb as a versioned artifact.
+
+        Name is ``<run_id>-checkpoint``; each call publishes a new version
+        with aliases ``step-<step>`` + ``latest`` (plus any extras). No-op
+        if wandb is off or ``cfg.wandb.log_model`` is False.
+        """
+        if not self.use_wandb or not self._log_model_artifacts:
+            return
+        run = wandb.run
+        if run is None:
+            return
+        try:
+            artifact = wandb.Artifact(
+                name=f"{run.id}-checkpoint",
+                type="model",
+                metadata={"step": int(step)},
+            )
+            artifact.add_file(str(path))
+            aliases = [f"step-{int(step)}", "latest"]
+            if extra_aliases:
+                aliases.extend(extra_aliases)
+            wandb.log_artifact(artifact, aliases=aliases)
+        except Exception:
+            log.exception("wandb.log_artifact failed for %s", path)
 
     def load(self, itr):
         """
