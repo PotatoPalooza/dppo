@@ -844,11 +844,11 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                             "Policy/diffusion_eta": eta_mean,
                             "Policy/diffusion_min_sampling_std": diffusion_min_sampling_std,
                             # GAE diagnostics
-                            "Advantages/mean": adv_mean,
-                            "Advantages/std": adv_std,
-                            "Returns/mean": ret_mean,
-                            "Values/mean": val_mean,
-                            "Values/std": val_std,
+                            "Train/mean_advantage": adv_mean,
+                            "Train/std_advantage": adv_std,
+                            "Train/mean_return": ret_mean,
+                            "Train/mean_value": val_mean,
+                            "Train/std_value": val_std,
                             # Rollout diagnostics
                             "Rollout/mean_reward_per_step": rollout_mean_reward_per_step,
                             "Rollout/terminated_rate": rollout_terminated_rate,
