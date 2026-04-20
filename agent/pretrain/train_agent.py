@@ -295,22 +295,31 @@ class PreTrainAgent:
                 },
                 epoch=result.epoch,
             )
-            for idx, video_path in enumerate(result.video_paths):
-                if not video_path or not os.path.isfile(video_path):
-                    continue
+            # Group all videos for this eval under a single ``video`` wandb
+            # panel (``video`` when one render env, else ``video_k``) so the
+            # pretrain UI matches the finetune layout instead of splitting
+            # into ``Eval/video_0`` / ``Eval/video_1`` / ...
+            valid_video_paths = [
+                (idx, vp)
+                for idx, vp in enumerate(result.video_paths)
+                if vp and os.path.isfile(vp)
+            ]
+            video_payload: dict = {}
+            for idx, video_path in valid_video_paths:
+                key = "video" if len(valid_video_paths) == 1 else f"video_{idx}"
                 try:
-                    self._wandb_log(
-                        {
-                            f"Eval/video_{idx}": wandb.Video(
-                                video_path, fps=20, format="mp4"
-                            )
-                        },
-                        epoch=result.epoch,
+                    video_payload[key] = wandb.Video(
+                        video_path, fps=20, format="mp4"
                     )
                 except Exception:
                     log.exception(
-                        "wandb video log failed for %s", video_path
+                        "wandb video wrap failed for %s", video_path
                     )
+            if video_payload:
+                try:
+                    self._wandb_log(video_payload, epoch=result.epoch)
+                except Exception:
+                    log.exception("wandb video log failed")
             self._maybe_save_best_async_result(result)
 
     def _maybe_save_best_async_result(self, result) -> None:
