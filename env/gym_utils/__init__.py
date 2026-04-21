@@ -126,6 +126,10 @@ def make_async(
     if robomimic_env_cfg_path is not None:
         import robomimic.utils.env_utils as EnvUtils
         import robomimic.utils.obs_utils as ObsUtils
+        try:
+            import mimicgen  # noqa: F401
+        except Exception:
+            pass
     elif "avoiding" in id:
         import gym_avoiding
     else:

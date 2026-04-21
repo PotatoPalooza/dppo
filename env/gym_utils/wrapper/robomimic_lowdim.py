@@ -59,7 +59,7 @@ class RobomimicLowdimWrapper(gym.Env):
         self.observation_space = spaces.Dict()
         obs_example_full = self.env.get_observation()
         obs_example = np.concatenate(
-            [obs_example_full[key] for key in self.obs_keys], axis=0
+            [self._flatten_obs_value(obs_example_full[key]) for key in self.obs_keys], axis=0
         )
         low = np.full_like(obs_example, fill_value=-1)
         high = np.full_like(obs_example, fill_value=1)
@@ -82,8 +82,20 @@ class RobomimicLowdimWrapper(gym.Env):
         action = (action + 1) / 2  # [-1, 1] -> [0, 1]
         return action * (self.action_max - self.action_min) + self.action_min
 
+    @staticmethod
+    def _flatten_obs_value(value):
+        array = np.asarray(value, dtype=np.float32)
+        if array.ndim == 0:
+            return array.reshape(1)
+        return array.reshape(-1)
+
     def get_observation(self, raw_obs):
-        obs = {"state": np.concatenate([raw_obs[key] for key in self.obs_keys], axis=0)}
+        obs = {
+            "state": np.concatenate(
+                [self._flatten_obs_value(raw_obs[key]) for key in self.obs_keys],
+                axis=0,
+            )
+        }
         if self.normalize:
             obs["state"] = self.normalize_obs(obs["state"])
         return obs

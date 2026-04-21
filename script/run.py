@@ -34,6 +34,13 @@ os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+WORKSPACE_ROOT = REPO_ROOT.parent
+for repo_name in ("mimicgen", "robomimic", "robosuite", "robosuite-task-zoo"):
+    repo_path = WORKSPACE_ROOT / repo_name
+    if repo_path.exists():
+        repo_path_str = str(repo_path)
+        if repo_path_str not in sys.path:
+            sys.path.insert(0, repo_path_str)
 
 # add logger
 log = logging.getLogger(__name__)
