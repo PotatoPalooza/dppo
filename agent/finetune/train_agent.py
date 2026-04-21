@@ -3,6 +3,8 @@ Parent fine-tuning agent class.
 
 """
 
+from __future__ import annotations
+
 import os
 import numpy as np
 from omegaconf import OmegaConf
@@ -165,7 +167,7 @@ class TrainAgent:
 
     def _log_checkpoint_artifact(
         self,
-        path,
+        path: str | os.PathLike[str],
         step: int,
         extra_aliases: list[str] | None = None,
     ) -> None:

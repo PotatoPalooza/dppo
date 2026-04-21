@@ -3,6 +3,8 @@ Parent pre-training agent class.
 
 """
 
+from __future__ import annotations
+
 import os
 import random
 import numpy as np
@@ -123,16 +125,15 @@ class PreTrainAgent:
         self.save_model_freq = cfg.train.save_model_freq
         self.checkpoint_eval_cfg = cfg.train.get("checkpoint_eval", None)
 
-        # Async checkpoint eval — lazy init (deferred to first save_model
+        # Async checkpoint eval -- lazy init (deferred to first save_model
         # so we pass the current EMA state_dict into the worker).
         self._async_eval_enabled = self._resolve_async_eval_enabled()
         self._async_eval_manager = None
         self._async_rollout_best: tuple[float, float, float] | None = None
         self._async_rollout_best_epoch: int | None = None
         if self._async_eval_enabled and self.use_wandb:
-            # Switch every metric to plot against ``local_step`` so
-            # async rollouts logged at past epochs don't try to go
-            # backwards in wandb's internal step (which is disallowed).
+            # Async results log at past epochs; use local_step to avoid
+            # wandb's backward-step rejection.
             try:
                 wandb.define_metric("local_step")
                 wandb.define_metric("*", step_metric="local_step")
@@ -184,9 +185,7 @@ class PreTrainAgent:
     def run(self):
         raise NotImplementedError
 
-    # ------------------------------------------------------------------
     # Async checkpoint-eval integration
-    # ------------------------------------------------------------------
 
     def _resolve_async_eval_enabled(self) -> bool:
         eval_cfg = getattr(self, "checkpoint_eval_cfg", None)
@@ -196,7 +195,7 @@ class PreTrainAgent:
             return False
         return bool(eval_cfg.get("async_enabled", False))
 
-    def _wandb_log(self, payload: dict, epoch: int, commit: bool = True) -> None:
+    def _wandb_log(self, payload: dict[str, object], epoch: int, commit: bool = True) -> None:
         """Wandb ``log`` helper that plays nicely with async past-epoch posts.
 
         When async eval is on we rely on ``define_metric(step_metric=
@@ -221,9 +220,7 @@ class PreTrainAgent:
         if not self._async_eval_enabled or self._async_eval_manager is not None:
             return
         eval_cfg = self.checkpoint_eval_cfg
-        # Import lazily: the manager pulls in hydra/OmegaConf + the
-        # in-repo rl_mimicgen package, and we don't want to force those
-        # on non-async runs.
+        # Lazy import -- avoids pulling hydra/rl_mimicgen on non-async runs.
         try:
             from rl_mimicgen.dppo_async import AsyncCheckpointEvalManager
         except Exception:
@@ -266,7 +263,7 @@ class PreTrainAgent:
             self._async_eval_manager = None
             self._async_eval_enabled = False
 
-    def _consume_async_eval_results(self, results) -> None:
+    def _consume_async_eval_results(self, results: list[AsyncEvalResult]) -> None:
         """Log + best-track every completed async eval result."""
         for result in results:
             if result.error is not None:
@@ -298,10 +295,8 @@ class PreTrainAgent:
                 },
                 epoch=result.epoch,
             )
-            # Group all videos for this eval under a single ``video`` wandb
-            # panel (``video`` when one render env, else ``video_k``) so the
-            # pretrain UI matches the finetune layout instead of splitting
-            # into ``Eval/video_0`` / ``Eval/video_1`` / ...
+            # Single ``video`` panel (``video_k`` when >1 render env) matches
+            # the finetune wandb layout.
             valid_video_paths = [
                 (idx, vp)
                 for idx, vp in enumerate(result.video_paths)
@@ -325,7 +320,7 @@ class PreTrainAgent:
                     log.exception("wandb video log failed")
             self._maybe_save_best_async_result(result)
 
-    def _maybe_save_best_async_result(self, result) -> None:
+    def _maybe_save_best_async_result(self, result: AsyncEvalResult) -> None:
         """Save the exact-weight snapshot if this result improves the best."""
         if result.ema_state_dict is None:
             return
@@ -405,7 +400,7 @@ class PreTrainAgent:
 
     def _log_checkpoint_artifact(
         self,
-        path,
+        path: str | os.PathLike[str],
         step: int,
         extra_aliases: list[str] | None = None,
     ) -> None:
@@ -434,14 +429,12 @@ class PreTrainAgent:
         except Exception:
             log.exception("wandb.log_artifact failed for %s", path)
 
-    def _maybe_run_checkpoint_eval(self):
+    def _maybe_run_checkpoint_eval(self) -> None:
         eval_cfg = self.checkpoint_eval_cfg
         if eval_cfg is None or not eval_cfg.get("enabled", False):
             return
 
-        # Async path: hand the current EMA weights to the background
-        # manager instead of subprocess-running the sweep. We keep the
-        # subprocess fallback for ``async_enabled=False``.
+        # Async path: submit EMA weights to background manager; subprocess fallback below.
         if self._async_eval_enabled:
             self._ensure_async_eval_manager()
             if self._async_eval_manager is not None:

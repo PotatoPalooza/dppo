@@ -152,7 +152,7 @@ class VPGDiffusion(DiffusionModel):
 
         ``actor_override`` skips the ``ft_indices`` dance when the caller
         already knows which actor to use for this entire batch (the
-        sampling path — ``VPGDiffusion.forward`` — has ``t`` as a Python
+        sampling path -- ``VPGDiffusion.forward`` -- has ``t`` as a Python
         scalar so it can pick the actor once without a GPU sync).
         """
         if actor_override is not None:
@@ -281,10 +281,8 @@ class VPGDiffusion(DiffusionModel):
         for i, t in enumerate(t_all):
             t_b = make_timesteps(B, t, device)
             index_b = make_timesteps(B, i, device)
-            # ``t`` is a Python int here (DDPM) or the DDIM ``t`` tensor-
-            # scalar. Pick which actor handles this entire batch so we
-            # avoid the ``torch.where(t < ft_denoising_steps)`` sync and
-            # the second forward pass inside ``p_mean_var``.
+            # Pick one actor per batch -- avoids torch.where sync + second
+            # p_mean_var forward pass.
             if self.use_ddim:
                 is_ft_step = i >= (self.ddim_steps - self.ft_denoising_steps)
             else:

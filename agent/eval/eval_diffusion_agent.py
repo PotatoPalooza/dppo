@@ -3,6 +3,8 @@ Evaluate pre-trained/DPPO-fine-tuned diffusion policy.
 
 """
 
+from __future__ import annotations
+
 import os
 import numpy as np
 import torch
@@ -14,7 +16,7 @@ from agent.eval.eval_agent import EvalAgent
 from model.diffusion.diffusion import _strip_compiled_prefix
 
 
-def _coerce_success_flag(value) -> bool:
+def _coerce_success_flag(value: object) -> bool:
     if value is None:
         return False
     if isinstance(value, (list, tuple)):
@@ -30,12 +32,12 @@ class EvalDiffusionAgent(EvalAgent):
         super().__init__(cfg)
 
     @torch.no_grad()
-    def load_pretrain_state_dict(self, state_dict: dict) -> None:
+    def load_pretrain_state_dict(self, state_dict: dict[str, torch.Tensor]) -> None:
         """Load a pretrain-style state_dict (keys prefixed with ``network.``
         or ``_orig_mod.network.``) into ``self.model.actor``.
 
         Mirrors the ``network.*`` fallback branch of
-        ``DiffusionEval.__init__`` — used by the async eval manager to push
+        ``DiffusionEval.__init__`` -- used by the async eval manager to push
         fresh EMA weights into the persistent eval agent without going
         through a disk checkpoint.
         """
@@ -66,7 +68,7 @@ class EvalDiffusionAgent(EvalAgent):
         self,
         video_dir: str | None = None,
         video_prefix: str = "eval_trial",
-    ) -> tuple[dict, list[str]]:
+    ) -> tuple[dict[str, float | int], list[str]]:
         """Run a rollout and return (metrics_dict, video_paths).
 
         ``metrics_dict`` keys: num_episode, success_rate, return_mean,

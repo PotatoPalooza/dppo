@@ -35,7 +35,7 @@ class TrainDiffusionAgent(PreTrainAgent):
         cnt_batch = 0
         for _ in range(self.n_epochs):
 
-            # train — accumulate loss tensors on GPU; one sync per epoch
+            # train -- accumulate loss tensors on GPU; one sync per epoch
             # instead of per batch. Matters at high batch counts per epoch.
             loss_train_epoch: list[torch.Tensor] = []
             for batch_train in self.dataloader_train:
@@ -88,7 +88,7 @@ class TrainDiffusionAgent(PreTrainAgent):
 
             # log loss
             if self.epoch % self.log_freq == 0:
-                epoch_time = timer()  # Timer resets on call → elapsed since last log
+                epoch_time = timer()  # Timer resets on call -> elapsed since last log
                 val_str = f" | val loss {loss_val:8.4f}" if loss_val is not None else ""
                 log.info(
                     f"{self.epoch}: train loss {loss_train:8.4f}{val_str} | t:{epoch_time:8.4f}"
@@ -111,14 +111,12 @@ class TrainDiffusionAgent(PreTrainAgent):
                     )
                 self._wandb_log(payload, epoch=self.epoch, commit=True)
 
-            # drain any async eval results posted since the last epoch;
-            # each result logs to wandb at its own (past) epoch via
-            # ``local_step``, not the current self.epoch.
+            # Drain async results -- each logs at its own past epoch via local_step.
             self.drain_async_eval()
 
             # count
             self.epoch += 1
 
-        # training is done — block on any still-in-flight rollouts so
+        # training is done -- block on any still-in-flight rollouts so
         # their metrics/videos land in wandb before the run finishes.
         self.shutdown_async_eval()

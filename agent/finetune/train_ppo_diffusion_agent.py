@@ -3,6 +3,8 @@ DPPO fine-tuning.
 
 """
 
+from __future__ import annotations
+
 import os
 import pickle
 import time
@@ -100,7 +102,7 @@ def _format_iter_summary(
     return "\n".join(lines)
 
 
-def _coerce_success_flag(value) -> bool:
+def _coerce_success_flag(value: object) -> bool:
     if value is None:
         return False
     if isinstance(value, (list, tuple)):
@@ -114,18 +116,8 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
 
-        # torch.compile actor/actor_ft/critic to fold kernel launches across
-        # the sampling loop (20 denoising steps × 400 substeps/iter) and the
-        # PPO update. Parent __init__ already built the optimizers on the
-        # underlying param tensors; torch.compile wraps the module but shares
-        # params, so optimizer state is unaffected. Toggle off via
-        # train.torch_compile=false.
-        # torch.compile in default mode — reduce-overhead (CUDA graph
-        # capture) was tried and breaks with "tensor output of CUDAGraphs
-        # has been overwritten by a subsequent run" because the denoising
-        # loop and the value/logprob pre-compute both hold references to
-        # intermediate actor/critic outputs across successive calls. Cloning
-        # every output would negate the graph win, so default it is.
+        # Default mode only -- reduce-overhead (CUDA graphs) errors on
+        # overwritten output tensors shared across denoising loop + PPO update.
         if bool(getattr(cfg.train, "torch_compile", True)):
             try:
                 self.model.actor = torch.compile(self.model.actor)
@@ -138,9 +130,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
         # Reward horizon --- always set to act_steps for now
         self.reward_horizon = cfg.get("reward_horizon", self.act_steps)
 
-        # Warp vec env accepts torch tensors on the same device (see
-        # WarpRobomimicVectorEnv.step). CPU AsyncVectorEnv does not — stay
-        # on numpy there. Check once rather than on every rollout step.
+        # Warp venv accepts torch-on-device directly; CPU AsyncVectorEnv doesn't.
         venv_dev = getattr(self.venv, "device", None)
         self._venv_accepts_torch = (
             isinstance(venv_dev, torch.device)
@@ -167,7 +157,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 gamma=1.0,
             )
 
-    def _collect_iter_videos(self) -> dict:
+    def _collect_iter_videos(self) -> dict[str, wandb.Video]:
         """Return {video[...]: wandb.Video(...)} for MP4s written this iter.
 
         Keyed under a single top-level ``video`` panel (``video`` when only
@@ -182,11 +172,8 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             return {}
         if self.itr % self.render_freq != 0:
             return {}
-        # wandb.Video(path) hashes + copies the file on construction, but
-        # imageio only writes the mp4 moov atom on writer.close(). If the
-        # venv is still holding writers open when we get here, wandb will
-        # upload truncated mp4s that render as "no playable media" in the
-        # browser. Ask the venv to finalize first.
+        # wandb.Video copies on construction; imageio writes the moov atom only
+        # on close(). Finalize writers first or wandb uploads truncated mp4s.
         close_fn = getattr(self.venv, "close_videos", None)
         if callable(close_fn):
             try:
@@ -251,10 +238,8 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 # if done at the end of last iteration, the envs are just reset
                 firsts_trajs[0] = done_venv
 
-            # GPU-resident rollout buffers — chains/obs are the big ones
-            # (~500MB + ~200MB at n_envs=1024), pre-allocating on the device
-            # avoids a full GPU->CPU->GPU round trip per rollout step plus the
-            # same again at the head of the PPO update.
+            # GPU-resident buffers -- ~700 MB at n_envs=1024; avoids D2H/H2D
+            # round trips per rollout step and at the PPO update head.
             obs_trajs_gpu = torch.zeros(
                 (self.n_steps, self.n_envs, self.n_cond_step, self.obs_dim),
                 dtype=torch.float32,
@@ -271,9 +256,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 dtype=torch.float32,
                 device=self.device,
             )
-            # Small per-step metadata — keep on CPU (numpy) since they come from
-            # the env as numpy and are consumed by episode-slicing / reward
-            # scaling code that's numpy-native.
+            # Numpy-native downstream (episode slicing, reward scaling).
             terminated_trajs = np.zeros((self.n_steps, self.n_envs))
             reward_trajs = np.zeros((self.n_steps, self.n_envs))
             success_trajs = (
@@ -307,10 +290,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                         deterministic=eval_mode,
                         return_chain=True,
                     )
-                    # Emitted action chunk — slice on GPU. The warp venv
-                    # accepts torch-on-device directly, skipping a 1024×4×7
-                    # D2H+H2D round trip per step. Fall back to numpy for
-                    # envs without that fast path (CPU AsyncVectorEnv).
+                    # Warp venv takes torch-on-device; CPU AsyncVectorEnv needs numpy.
                     action_chunk_t = samples.trajectories[:, : self.act_steps]
                     if self._venv_accepts_torch:
                         action_venv = action_chunk_t
@@ -341,7 +321,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     obs_full_trajs = np.vstack(
                         (obs_full_trajs, obs_full_venv.transpose(1, 0, 2))
                     )
-                # GPU-resident writes — no host copy.
+                # GPU-resident writes -- no host copy.
                 obs_trajs_gpu[step] = cond_state_t
                 chains_trajs_gpu[step] = samples.chains
                 reward_trajs[step] = reward_venv
@@ -415,9 +395,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             loss = pg_loss = v_loss = bc_loss = 0.0
             eta = approx_kl = ratio = 0.0
             explained_var = float("nan")
-            # Per-batch stats accumulated as GPU tensors — one sync per
-            # epoch (not per batch) cuts ~8 host/device transfers × 400+
-            # batches = several thousand sync points per iter.
+            # GPU-resident per-batch accumulators -- one sync/epoch, not per-batch.
             _agg_keys = (
                 "loss", "pg", "v", "bc", "eta_", "kl", "kl_max", "ratio",
                 "actor_gn", "critic_gn", "clipfrac",
@@ -445,9 +423,8 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     values_flat = torch.cat(values_chunks, dim=0)
                     values_trajs_t = values_flat.view(self.n_steps, self.n_envs)
 
-                    # get_logprobs returns (B * ft_denoising_steps, Ta, Da).
-                    # Reshape each chunk back to (B, ft_denoising_steps, Ta, Da)
-                    # so the update loop can index it by (batch_inds, denoising_inds).
+                    # Reshape (B * ft_denoising_steps, Ta, Da) -> (B, ft_denoising_steps, Ta, Da)
+                    # so the update loop can index by (batch_inds, denoising_inds).
                     logprobs_chunks: list[torch.Tensor] = []
                     for obs_t, chains in zip(obs_ts_k, chains_ts):
                         lp = self.model.get_logprobs({"state": obs_t}, chains)
@@ -468,9 +445,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                         )
                         reward_trajs = reward_trajs_transpose.T
 
-                    # GAE on GPU — upload the small (n_steps, n_envs) numpy
-                    # buffers once and run the backward recursion with torch
-                    # ops. Nextvalues bootstrap from the critic on obs_venv.
+                    # GAE on GPU; nextvalues bootstrap from critic(obs_venv).
                     reward_trajs_t = torch.as_tensor(
                         reward_trajs, dtype=torch.float32, device=self.device
                     )
@@ -503,7 +478,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                         advantages_trajs_t[t] = lastgaelam
                     returns_trajs_t = advantages_trajs_t + values_trajs_t
 
-                # k for environment step — everything already on GPU.
+                # k for environment step -- everything already on GPU.
                 obs_k = {"state": obs_k_t}
                 chains_k = chains_k_t
                 returns_k = returns_trajs_t.reshape(-1)
@@ -569,9 +544,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                             self.eta_optimizer.zero_grad()
                         loss.backward()
                         if self.itr >= self.n_critic_warmup_itr:
-                            # clip_grad_norm_ with max_norm=inf returns the pre-clip
-                            # total norm without actually clipping anything, which
-                            # is what we want for logging when max_grad_norm=None.
+                            # max_norm=inf -> returns pre-clip norm without clipping.
                             clip_actor = self.max_grad_norm if self.max_grad_norm is not None else float("inf")
                             actor_gn = torch.nn.utils.clip_grad_norm_(
                                 self.model.actor_ft.parameters(), clip_actor
@@ -586,10 +559,8 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                         )
                         self.critic_optimizer.step()
 
-                        # Tensor-side accumulation: no .item() / float() calls
-                        # in this hot loop. approx_kl is the sole GPU scalar
-                        # we materialize to CPU, and only when target_kl is
-                        # set (so we can break the update early).
+                        # Hot loop -- avoid .item()/float(); only approx_kl syncs
+                        # (for target_kl early-break).
                         with torch.no_grad():
                             _agg_t["loss"] = _agg_t["loss"] + loss.detach()
                             _agg_t["pg"] = _agg_t["pg"] + pg_loss.detach()
@@ -619,7 +590,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     if flag_break:
                         break
 
-                # Explained variation — computed on GPU, one scalar sync.
+                # Explained variation -- computed on GPU, one scalar sync.
                 with torch.no_grad():
                     var_y = returns_k.var(unbiased=False)
                     explained_var_t = torch.where(
@@ -691,9 +662,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
             rollout_truncated_rate = float(
                 (done_trajs & ~terminated_trajs.astype(bool)).mean()
             )
-            # Emitted actions = final horizon from the denoising chain.
-            # chains_trajs_gpu is now torch on device; compute the std there
-            # and materialize a single scalar.
+            # Emitted actions = final horizon slice; compute std on GPU.
             with torch.no_grad():
                 final_actions_t = chains_trajs_gpu[:, :, -1, : self.act_steps]
                 rollout_mean_action_std = float(
@@ -730,7 +699,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 actor_gn_mean = critic_gn_mean = 0.0
                 clipfrac_mean = 0.0
 
-            # GAE diagnostics (only valid on train iters) — compute on GPU.
+            # GAE diagnostics (only valid on train iters) -- compute on GPU.
             if not eval_mode:
                 with torch.no_grad():
                     diag = torch.stack(
