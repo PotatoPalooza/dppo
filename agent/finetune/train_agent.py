@@ -28,6 +28,13 @@ class TrainAgent:
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+        launcher_metadata = cfg.get("launcher_metadata", {})
+        self.source_checkpoint = launcher_metadata.get("source_checkpoint")
+        self.bc_success_rate = self._coerce_optional_float(
+            launcher_metadata.get("bc_success_rate")
+        )
+        self.bc_success_source = launcher_metadata.get("bc_success_source")
+        self.init_eval_success = None
 
         # Wandb
         self.use_wandb = cfg.wandb is not None
@@ -45,6 +52,7 @@ class TrainAgent:
                 wandb.define_metric("train/*", step_metric="env_step")
                 wandb.define_metric("eval/*", step_metric="env_step")
                 wandb.define_metric("charts/*", step_metric="env_step")
+                self._update_wandb_success_summary()
             except Exception:
                 self.use_wandb = False
                 log.exception("wandb.init failed; disabling W&B logging for this run.")
@@ -179,6 +187,52 @@ class TrainAgent:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, default=self._json_default) + "\n")
 
+    @staticmethod
+    def _coerce_optional_float(value):
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _update_wandb_success_summary(self):
+        if not self.use_wandb or getattr(wandb, "run", None) is None:
+            return
+        summary_updates = {}
+        if self.source_checkpoint:
+            summary_updates["success/source_checkpoint"] = self.source_checkpoint
+        if self.bc_success_source:
+            summary_updates["success/bc_source"] = self.bc_success_source
+        if self.bc_success_rate is not None:
+            summary_updates["success/bc_rate"] = float(self.bc_success_rate)
+            summary_updates["% BC"] = 100.0 * float(self.bc_success_rate)
+        if self.init_eval_success is not None:
+            summary_updates["success/init_rl_rate"] = float(self.init_eval_success)
+            summary_updates["% init RL"] = 100.0 * float(self.init_eval_success)
+        best_eval_success = getattr(self, "best_eval_success", float("-inf"))
+        best_eval_itr = getattr(self, "best_eval_itr", None)
+        if best_eval_success != float("-inf"):
+            summary_updates["success/best_rate"] = float(best_eval_success)
+            summary_updates["% best success"] = 100.0 * float(best_eval_success)
+        if best_eval_itr is not None:
+            summary_updates["success/best_itr"] = int(best_eval_itr)
+        if not summary_updates:
+            return
+        try:
+            for key, value in summary_updates.items():
+                wandb.run.summary[key] = value
+        except Exception:
+            self.use_wandb = False
+            log.exception(
+                "wandb summary update failed; disabling W&B logging for the rest of this run."
+            )
+
+    def _record_initial_eval_success(self, success_rate):
+        if self.init_eval_success is None:
+            self.init_eval_success = float(success_rate)
+            self._update_wandb_success_summary()
+
     def _serialize_model(self, path):
         data = {
             "itr": self.itr,
@@ -214,6 +268,7 @@ class TrainAgent:
         self.best_eval_metrics = summary
         self.best_eval_itr = self.itr
         self._write_json(self.best_checkpoint_summary_path, summary)
+        self._update_wandb_success_summary()
         self._record_checkpoint_event(
             {
                 "kind": "best_eval",

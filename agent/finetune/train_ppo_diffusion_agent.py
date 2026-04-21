@@ -507,6 +507,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                     log.info(
                         f"eval: success rate {success_rate:8.4f} | avg episode reward {avg_episode_reward:8.4f} | avg best reward {avg_best_reward:8.4f}"
                     )
+                    self._record_initial_eval_success(success_rate)
                     if self.use_wandb:
                         wandb.log(
                             {
@@ -593,3 +594,14 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 with open(self.result_path, "wb") as f:
                     pickle.dump(run_results, f)
             self.itr += 1
+
+        self._update_wandb_success_summary()
+        summary_tokens = []
+        if self.bc_success_rate is not None:
+            summary_tokens.append(f"% BC {100.0 * float(self.bc_success_rate):.2f}")
+        if self.init_eval_success is not None:
+            summary_tokens.append(f"% init RL {100.0 * float(self.init_eval_success):.2f}")
+        if self.best_eval_success != float("-inf"):
+            summary_tokens.append(f"% best success {100.0 * float(self.best_eval_success):.2f}")
+        if summary_tokens:
+            log.info(" | ".join(summary_tokens))
