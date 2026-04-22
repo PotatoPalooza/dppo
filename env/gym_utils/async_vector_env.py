@@ -166,6 +166,10 @@ class AsyncVectorEnv(VectorEnv):
                 _obs_buffer = create_shared_memory(
                     self.single_observation_space, n=self.num_envs, ctx=ctx
                 )
+                # Keep a strong reference alive for the life of the vector env.
+                # Under the spawn start method, dropping the parent-side handle
+                # too early can break child reconstruction of the shared buffer.
+                self._obs_buffer = _obs_buffer
                 self.observations = read_from_shared_memory(
                     self.single_observation_space, _obs_buffer, n=self.num_envs
                 )
@@ -180,6 +184,7 @@ class AsyncVectorEnv(VectorEnv):
                 )
         else:
             _obs_buffer = None
+            self._obs_buffer = None
             self.observations = create_empty_array(
                 self.single_observation_space, n=self.num_envs, fn=np.zeros
             )
