@@ -51,13 +51,13 @@ class RobomimicImageWrapper(gym.Env):
             self.action_max = normalization["action_max"]
 
         # setup spaces
-        low = np.full(env.action_dimension, fill_value=-1)
-        high = np.full(env.action_dimension, fill_value=1)
+        low = np.full(env.action_dimension, fill_value=-1.0, dtype=np.float32)
+        high = np.full(env.action_dimension, fill_value=1.0, dtype=np.float32)
         self.action_space = gym.spaces.Box(
             low=low,
             high=high,
             shape=low.shape,
-            dtype=low.dtype,
+            dtype=np.float32,
         )
         self.low_dim_keys = low_dim_keys
         self.image_keys = image_keys
@@ -91,6 +91,26 @@ class RobomimicImageWrapper(gym.Env):
     def unnormalize_action(self, action):
         action = (action + 1) / 2  # [-1, 1] -> [0, 1]
         return action * (self.action_max - self.action_min) + self.action_min
+
+    def _prepare_action(self, action):
+        action = np.asarray(action, dtype=np.float32)
+        expected_shape = self.action_space.shape
+        if action.shape != expected_shape:
+            try:
+                action = action.reshape(expected_shape)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Expected action shape {expected_shape}, got {action.shape}"
+                ) from exc
+        if not np.isfinite(action).all():
+            raise ValueError(
+                "RobomimicImageWrapper received non-finite action values: "
+                f"min={np.nanmin(action)!r}, max={np.nanmax(action)!r}"
+            )
+        if self.normalize:
+            action = np.clip(action, -1.0, 1.0)
+            action = self.unnormalize_action(action)
+        return np.ascontiguousarray(action, dtype=np.float32)
 
     def get_observation(self, raw_obs):
         obs = {"rgb": None, "state": None}  # stack rgb if multiple cameras
@@ -150,8 +170,7 @@ class RobomimicImageWrapper(gym.Env):
         return self.get_observation(raw_obs)
 
     def step(self, action):
-        if self.normalize:
-            action = self.unnormalize_action(action)
+        action = self._prepare_action(action)
         raw_obs, reward, done, info = self.env.step(action)
         info = dict(info)
         success_fn = getattr(self.env, "is_success", None)
