@@ -53,12 +53,35 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
                 warmup_steps=cfg.train.eta_lr_scheduler.warmup_steps,
                 gamma=1.0,
             )
+        if self.resume_path:
+            self.load_checkpoint(self.resume_path)
+
+    def _checkpoint_state(self):
+        payload = super()._checkpoint_state()
+        if self.learn_eta:
+            payload["eta_optimizer"] = self.eta_optimizer.state_dict()
+            payload["eta_lr_scheduler"] = self.eta_lr_scheduler.state_dict()
+        return payload
+
+    def _restore_checkpoint_state(self, payload):
+        super()._restore_checkpoint_state(payload)
+        if self.learn_eta:
+            eta_optimizer = payload.get("eta_optimizer")
+            eta_lr_scheduler = payload.get("eta_lr_scheduler")
+            if eta_optimizer is not None:
+                self.eta_optimizer.load_state_dict(eta_optimizer)
+            if eta_lr_scheduler is not None:
+                self.eta_lr_scheduler.load_state_dict(eta_lr_scheduler)
 
     def run(self):
         # Start training loop
         timer = Timer()
-        run_results = []
-        cnt_train_step = 0
+        if os.path.exists(self.result_path):
+            with open(self.result_path, "rb") as f:
+                run_results = [entry for entry in pickle.load(f) if int(entry.get("itr", -1)) < self.itr]
+        else:
+            run_results = []
+        cnt_train_step = self.cnt_train_step
         last_itr_eval = False
         done_venv = np.zeros((1, self.n_envs))
         while self.itr < self.n_train_itr:
@@ -479,6 +502,7 @@ class TrainPPODiffusionAgent(TrainPPOAgent):
 
             # Save model
             checkpoint_path = None
+            self.cnt_train_step = cnt_train_step
             if self.itr % self.save_model_freq == 0 or self.itr == self.n_train_itr - 1:
                 checkpoint_path = self.save_model()
 

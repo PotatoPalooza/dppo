@@ -22,6 +22,8 @@ class TrainDiffusionAgent(PreTrainAgent):
         if cfg.train.get("use_compile", False):
             self.model = torch.compile(self.model)
             self.ema_model = torch.compile(self.ema_model)
+        if self.resume_path:
+            self.load_checkpoint(self.resume_path)
 
     def _autocast(self):
         if self.use_bf16 and "cuda" in str(self.device):
@@ -31,9 +33,7 @@ class TrainDiffusionAgent(PreTrainAgent):
     def run(self):
 
         timer = Timer()
-        self.epoch = 1
-        cnt_batch = 0
-        for _ in range(self.n_epochs):
+        while self.epoch <= self.n_epochs:
 
             # train
             loss_train_epoch = []
@@ -51,9 +51,9 @@ class TrainDiffusionAgent(PreTrainAgent):
                 self.optimizer.zero_grad()
 
                 # update ema
-                if cnt_batch % self.update_ema_freq == 0:
+                if self.cnt_batch % self.update_ema_freq == 0:
                     self.step_ema()
-                cnt_batch += 1
+                self.cnt_batch += 1
             loss_train = np.mean(loss_train_epoch)
 
             # validate

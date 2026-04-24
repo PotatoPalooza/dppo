@@ -28,6 +28,7 @@ class TrainAgent:
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+        self.resume_path = cfg.get("resume_path", None)
         launcher_metadata = cfg.get("launcher_metadata", {})
         self.source_checkpoint = launcher_metadata.get("source_checkpoint")
         self.bc_success_rate = self._coerce_optional_float(
@@ -45,6 +46,8 @@ class TrainAgent:
                     entity=cfg.wandb.entity,
                     project=cfg.wandb.project,
                     name=cfg.wandb.run,
+                    id=cfg.wandb.get("id", None),
+                    resume=cfg.wandb.get("resume", None),
                     config=OmegaConf.to_container(cfg, resolve=True),
                 )
                 wandb.define_metric("iteration")
@@ -106,6 +109,7 @@ class TrainAgent:
 
         # Training params
         self.itr = 0
+        self.cnt_train_step = 0
         self.n_train_itr = cfg.train.n_train_itr
         self.val_freq = cfg.train.val_freq
         self.force_train = cfg.train.get("force_train", False)
@@ -167,6 +171,13 @@ class TrainAgent:
 
     def run(self):
         pass
+
+    def _checkpoint_state(self):
+        return {}
+
+    def _restore_checkpoint_state(self, payload):
+        del payload
+        return None
 
     def _json_default(self, value):
         if isinstance(value, np.generic):
@@ -236,7 +247,13 @@ class TrainAgent:
     def _serialize_model(self, path):
         data = {
             "itr": self.itr,
+            "cnt_train_step": self.cnt_train_step,
             "model": self.model.state_dict(),
+            "best_eval_success": self.best_eval_success,
+            "best_eval_metrics": self.best_eval_metrics,
+            "best_eval_itr": self.best_eval_itr,
+            "init_eval_success": self.init_eval_success,
+            "extra_state": self._checkpoint_state(),
         }  # right now `model` includes weights for `network`, `actor`, `actor_ft`. Weights for `network` is redundant, and we can use `actor` weights as the base policy (earlier denoising steps) and `actor_ft` weights as the fine-tuned policy (later denoising steps) during evaluation.
         torch.save(data, path)
         return path
@@ -303,14 +320,28 @@ class TrainAgent:
         return savepath
 
     def load(self, itr):
-        """
-        loads model from disk
-        """
         loadpath = os.path.join(self.checkpoint_dir, f"state_{itr}.pt")
-        data = torch.load(loadpath, weights_only=True)
+        self.load_checkpoint(loadpath)
 
-        self.itr = data["itr"]
+    def load_checkpoint(self, checkpoint_path):
+        """
+        loads model and training state from disk
+        """
+        data = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+
+        saved_itr = int(data["itr"])
+        self.itr = saved_itr + 1
+        self.cnt_train_step = int(data.get("cnt_train_step", 0))
         self.model.load_state_dict(data["model"])
+        self.best_eval_success = float(data.get("best_eval_success", float("-inf")))
+        self.best_eval_metrics = data.get("best_eval_metrics")
+        self.best_eval_itr = data.get("best_eval_itr")
+        self.init_eval_success = self._coerce_optional_float(data.get("init_eval_success"))
+        extra_state = data.get("extra_state", {})
+        if isinstance(extra_state, dict):
+            self._restore_checkpoint_state(extra_state)
+        self._update_wandb_success_summary()
+        log.info("Resumed finetune from %s (next itr=%s)", checkpoint_path, self.itr)
 
     def reset_env_all(self, verbose=False, options_venv=None, **kwargs):
         if options_venv is None:

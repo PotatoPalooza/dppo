@@ -4,6 +4,7 @@ Parent PPO fine-tuning agent class.
 """
 
 from typing import Optional
+import numpy as np
 import torch
 import logging
 from util.scheduler import CosineAnnealingWarmupRestarts
@@ -110,3 +111,45 @@ class TrainPPOAgent(TrainAgent):
         new_scheduler.load_state_dict(self.actor_lr_scheduler.state_dict())
         self.actor_lr_scheduler = new_scheduler
         log.info("Reset actor optimizer")
+
+    def _checkpoint_state(self):
+        payload = {
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "critic_optimizer": self.critic_optimizer.state_dict(),
+            "actor_lr_scheduler": self.actor_lr_scheduler.state_dict(),
+            "critic_lr_scheduler": self.critic_lr_scheduler.state_dict(),
+        }
+        if self.reward_scale_running:
+            payload["running_reward_scaler"] = {
+                "ret": self.running_reward_scaler.ret.tolist(),
+                "ret_rms_mean": self.running_reward_scaler.ret_rms.mean.tolist(),
+                "ret_rms_var": self.running_reward_scaler.ret_rms.var.tolist(),
+                "ret_rms_count": float(self.running_reward_scaler.ret_rms.count),
+            }
+        return payload
+
+    def _restore_checkpoint_state(self, payload):
+        actor_optimizer = payload.get("actor_optimizer")
+        critic_optimizer = payload.get("critic_optimizer")
+        actor_lr_scheduler = payload.get("actor_lr_scheduler")
+        critic_lr_scheduler = payload.get("critic_lr_scheduler")
+        if actor_optimizer is not None:
+            self.actor_optimizer.load_state_dict(actor_optimizer)
+        if critic_optimizer is not None:
+            self.critic_optimizer.load_state_dict(critic_optimizer)
+        if actor_lr_scheduler is not None:
+            self.actor_lr_scheduler.load_state_dict(actor_lr_scheduler)
+        if critic_lr_scheduler is not None:
+            self.critic_lr_scheduler.load_state_dict(critic_lr_scheduler)
+        scaler_state = payload.get("running_reward_scaler")
+        if self.reward_scale_running and isinstance(scaler_state, dict):
+            self.running_reward_scaler.ret = np.asarray(scaler_state.get("ret", []), dtype=float)
+            self.running_reward_scaler.ret_rms.mean = np.asarray(
+                scaler_state.get("ret_rms_mean", []), dtype=float
+            )
+            self.running_reward_scaler.ret_rms.var = np.asarray(
+                scaler_state.get("ret_rms_var", []), dtype=float
+            )
+            self.running_reward_scaler.ret_rms.count = float(
+                scaler_state.get("ret_rms_count", self.running_reward_scaler.ret_rms.count)
+            )

@@ -68,6 +68,9 @@ class PreTrainAgent:
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+        self.resume_path = cfg.get("resume_path", None)
+        self.epoch = 1
+        self.cnt_batch = 0
 
         # Wandb
         self.use_wandb = cfg.wandb is not None
@@ -78,6 +81,8 @@ class PreTrainAgent:
                     entity=cfg.wandb.entity,
                     project=cfg.wandb.project,
                     name=cfg.wandb.run,
+                    id=cfg.wandb.get("id", None),
+                    resume=cfg.wandb.get("resume", None),
                     config=OmegaConf.to_container(cfg, resolve=True),
                 )
             except Exception:
@@ -116,6 +121,7 @@ class PreTrainAgent:
         self.logdir = cfg.logdir
         self.checkpoint_dir = os.path.join(self.logdir, "checkpoint")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        self.result_path = os.path.join(self.logdir, "result.pkl")
         self.log_freq = cfg.train.get("log_freq", 1)
         self.save_model_freq = cfg.train.save_model_freq
         self.checkpoint_eval_cfg = cfg.train.get("checkpoint_eval", None)
@@ -177,8 +183,11 @@ class PreTrainAgent:
         """
         data = {
             "epoch": self.epoch,
+            "cnt_batch": self.cnt_batch,
             "model": self.model.state_dict(),
             "ema": self.ema_model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": self.lr_scheduler.state_dict(),
         }
         savepath = os.path.join(self.checkpoint_dir, f"state_{self.epoch}.pt")
         torch.save(data, savepath)
@@ -237,12 +246,22 @@ class PreTrainAgent:
         subprocess.run(command, cwd=repo_root, check=True)
 
     def load(self, epoch):
-        """
-        loads model and ema from disk
-        """
         loadpath = os.path.join(self.checkpoint_dir, f"state_{epoch}.pt")
-        data = torch.load(loadpath, weights_only=True)
+        self.load_checkpoint(loadpath)
 
-        self.epoch = data["epoch"]
+    def load_checkpoint(self, checkpoint_path):
+        """
+        loads model, ema, and optimizer state from disk
+        """
+        data = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+
+        saved_epoch = int(data["epoch"])
+        self.epoch = saved_epoch + 1
+        self.cnt_batch = int(data.get("cnt_batch", 0))
         self.model.load_state_dict(data["model"])
         self.ema_model.load_state_dict(data["ema"])
+        if "optimizer" in data:
+            self.optimizer.load_state_dict(data["optimizer"])
+        if "lr_scheduler" in data:
+            self.lr_scheduler.load_state_dict(data["lr_scheduler"])
+        log.info("Resumed pretrain from %s (next epoch=%s)", checkpoint_path, self.epoch)
