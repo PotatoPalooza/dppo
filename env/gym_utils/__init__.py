@@ -196,7 +196,7 @@ def make_async(
             for key, value in shape_meta["obs"].items():
                 shape = value["shape"]
                 if key.endswith("rgb"):
-                    min_value, max_value = -1, 1
+                    min_value, max_value = 0, 255
                 elif key.endswith("state"):
                     min_value, max_value = -1, 1
                 else:
@@ -215,12 +215,21 @@ def make_async(
                 dtype=np.float32,
             )
         env.observation_space = observation_space
-        env.action_space = gym.spaces.Box(-1, 1, shape=(action_dim,), dtype=np.int64)
+        env.action_space = gym.spaces.Box(-1, 1, shape=(action_dim,), dtype=np.float32)
         env.metadata = {
             "render.modes": ["human", "rgb_array", "depth_array"],
             "video.frames_per_second": 12,
         }
-        return MultiStep(env=env, n_obs_steps=wrappers.multi_step.n_obs_steps)
+        return MultiStep(
+            env=env,
+            n_obs_steps=wrappers.multi_step.n_obs_steps,
+            n_action_steps=wrappers.multi_step.get("n_action_steps", 1),
+            max_episode_steps=wrappers.multi_step.get("max_episode_steps", None),
+            reward_agg_method=wrappers.multi_step.get("reward_agg_method", "sum"),
+            prev_action=wrappers.multi_step.get("prev_action", True),
+            reset_within_step=wrappers.multi_step.get("reset_within_step", False),
+            pass_full_observations=wrappers.multi_step.get("pass_full_observations", False),
+        )
 
     env_fns = [_make_env for _ in range(num_envs)]
     return (

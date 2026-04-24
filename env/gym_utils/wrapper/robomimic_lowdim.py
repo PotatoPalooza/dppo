@@ -29,6 +29,7 @@ class RobomimicLowdimWrapper(gym.Env):
         init_state=None,
         render_hw=(256, 256),
         render_camera_name="agentview",
+        terminate_on_success=False,
     ):
         self.env = env
         self.init_state = init_state
@@ -36,6 +37,7 @@ class RobomimicLowdimWrapper(gym.Env):
         self.render_camera_name = render_camera_name
         self.video_writer = None
         self.clamp_obs = clamp_obs
+        self.terminate_on_success = terminate_on_success
 
         # set up normalization
         self.normalize = normalization_path is not None
@@ -126,8 +128,10 @@ class RobomimicLowdimWrapper(gym.Env):
         else:
             np.random.seed()
 
-    def reset(self, options={}, **kwargs):
+    def reset(self, options=None, **kwargs):
         """Ignore passed-in arguments like seed"""
+        if options is None:
+            options = {}
         # Close video if exists
         if self.video_writer is not None:
             self.video_writer.close()
@@ -138,9 +142,7 @@ class RobomimicLowdimWrapper(gym.Env):
             self.video_writer = imageio.get_writer(options["video_path"], fps=30)
 
         # Call reset
-        new_seed = options.get(
-            "seed", None
-        )  # used to set all environments to specified seeds
+        new_seed = options.get("seed", kwargs.get("seed", None))
         if self.init_state is not None:
             # always reset to the same state to be compatible with gym
             raw_obs = self.env.reset_to({"states": self.init_state})
@@ -157,9 +159,11 @@ class RobomimicLowdimWrapper(gym.Env):
         raw_obs, reward, done, info = self.env.step(action)
         info = dict(info)
         success_fn = getattr(self.env, "is_success", None)
+        success = False
         if callable(success_fn):
             try:
-                info["success"] = bool(success_fn().get("task", False))
+                success = bool(success_fn().get("task", False))
+                info["success"] = success
             except Exception:
                 info["success"] = False
         obs = self.get_observation(raw_obs)
@@ -169,7 +173,7 @@ class RobomimicLowdimWrapper(gym.Env):
             video_img = self.render(mode="rgb_array")
             self.video_writer.append_data(video_img)
 
-        return obs, reward, False, info
+        return obs, reward, bool(done or (self.terminate_on_success and success)), info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

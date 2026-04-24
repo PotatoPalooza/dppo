@@ -32,6 +32,7 @@ class RobomimicImageWrapper(gym.Env):
         init_state=None,
         render_hw=(256, 256),
         render_camera_name="agentview",
+        terminate_on_success=False,
     ):
         self.env = env
         self.init_state = init_state
@@ -40,6 +41,7 @@ class RobomimicImageWrapper(gym.Env):
         self.render_camera_name = render_camera_name
         self.video_writer = None
         self.clamp_obs = clamp_obs
+        self.terminate_on_success = terminate_on_success
 
         # set up normalization
         self.normalize = normalization_path is not None
@@ -66,7 +68,7 @@ class RobomimicImageWrapper(gym.Env):
         for key, value in shape_meta["obs"].items():
             shape = value["shape"]
             if key.endswith("rgb"):
-                min_value, max_value = 0, 1
+                min_value, max_value = 0, 255
             elif key.endswith("state"):
                 min_value, max_value = -1, 1
             else:
@@ -129,7 +131,7 @@ class RobomimicImageWrapper(gym.Env):
                     obs["state"] = np.concatenate([obs["state"], raw_obs[key]], axis=-1)
         if self.normalize:
             obs["state"] = self.normalize_obs(obs["state"])
-        obs["rgb"] *= 255  # [0, 1] -> [0, 255], in float64
+        obs["rgb"] = (obs["rgb"] * 255).astype(np.float32, copy=False)
         return obs
 
     def seed(self, seed=None):
@@ -138,8 +140,10 @@ class RobomimicImageWrapper(gym.Env):
         else:
             np.random.seed()
 
-    def reset(self, options={}, **kwargs):
+    def reset(self, options=None, **kwargs):
         """Ignore passed-in arguments like seed"""
+        if options is None:
+            options = {}
         # Close video if exists
         if self.video_writer is not None:
             self.video_writer.close()
@@ -150,9 +154,7 @@ class RobomimicImageWrapper(gym.Env):
             self.video_writer = imageio.get_writer(options["video_path"], fps=30)
 
         # Call reset
-        new_seed = options.get(
-            "seed", None
-        )  # used to set all environments to specified seeds
+        new_seed = options.get("seed", kwargs.get("seed", None))
         if self.init_state is not None:
             if not self.has_reset_before:
                 # the env must be fully reset at least once to ensure correct rendering
@@ -174,9 +176,11 @@ class RobomimicImageWrapper(gym.Env):
         raw_obs, reward, done, info = self.env.step(action)
         info = dict(info)
         success_fn = getattr(self.env, "is_success", None)
+        success = False
         if callable(success_fn):
             try:
-                info["success"] = bool(success_fn().get("task", False))
+                success = bool(success_fn().get("task", False))
+                info["success"] = success
             except Exception:
                 info["success"] = False
         obs = self.get_observation(raw_obs)
@@ -186,7 +190,7 @@ class RobomimicImageWrapper(gym.Env):
             video_img = self.render(mode="rgb_array")
             self.video_writer.append_data(video_img)
 
-        return obs, reward, False, info
+        return obs, reward, bool(done or (self.terminate_on_success and success)), info
 
     def render(self, mode="rgb_array"):
         h, w = self.render_hw

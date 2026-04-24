@@ -51,6 +51,13 @@ def dict_take_last_n(x, n):
     return result
 
 
+def dict_aggregate_chunk_info(x):
+    result = dict_take_last_n(x, 1)
+    if "success" in x:
+        result["success"] = bool(np.max(np.asarray(x["success"], dtype=bool)))
+    return result
+
+
 def aggregate(data, method="max"):
     if method == "max":
         # equivalent to any
@@ -111,9 +118,11 @@ class MultiStep(gym.Wrapper):
         self,
         seed: Optional[int] = None,
         return_info: bool = False,
-        options: dict = {},
+        options: Optional[dict] = None,
     ):
         """Resets the environment."""
+        if options is None:
+            options = {}
         obs = self.env.reset(
             seed=seed,
             options=options,
@@ -126,7 +135,7 @@ class MultiStep(gym.Wrapper):
             )
         self.reward = list()
         self.done = list()
-        self.info = defaultdict(lambda: deque(maxlen=self.n_obs_steps + 1))
+        self.info = defaultdict(lambda: deque(maxlen=max(self.n_obs_steps + 1, self.n_action_steps)))
         obs = self._get_obs(self.n_obs_steps)
 
         self.cnt = 0
@@ -149,7 +158,8 @@ class MultiStep(gym.Wrapper):
             observation, reward, done, info = self.env.step(act)
 
             self.obs.append(observation)
-            self.action.append(act)
+            if self.prev_action:
+                self.action.append(act)
             self.reward.append(reward)
             
             # in gym, timelimit wrapper is automatically used given env._spec.max_episode_steps
@@ -170,6 +180,10 @@ class MultiStep(gym.Wrapper):
         reward = aggregate(self.reward, self.reward_agg_method)
         done = aggregate(self.done, "max")
         info = dict_take_last_n(self.info, self.n_obs_steps)
+        chunk_info = dict_aggregate_chunk_info(self.info)
+        for key, value in chunk_info.items():
+            if key == "success":
+                info[key] = value
         if self.pass_full_observations:
             info["full_obs"] = self._get_obs(act_step + 1)
 
